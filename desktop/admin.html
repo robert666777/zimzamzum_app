@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin - Pending Payments</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: 'Poppins', 'Segoe UI', sans-serif;
+      background: #1a1a1a;
+      color: #fff;
+      padding: 24px 20px 32px;
+      min-height: 100vh;
+    }
+    
+    .login-container {
+      max-width: 420px;
+      margin: 100px auto;
+      padding: 40px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 16px;
+      text-align: center;
+    }
+    
+    .login-icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+    }
+    
+    .login-title {
+      font-size: 24px;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 8px;
+    }
+    
+    .login-subtitle {
+      font-size: 14px;
+      color: rgba(255, 255, 255, 0.6);
+      margin-bottom: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    
+    .login-form {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    
+    .login-input {
+      padding: 14px 18px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.05);
+      color: #fff;
+      font-size: 15px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    
+    .login-input:focus {
+      border-color: #4ade80;
+    }
+    
+    .login-input::placeholder {
+      color: rgba(255, 255, 255, 0.4);
+    }
+    
+    .login-btn {
+      background: #4ade80;
+      color: #000;
+      border: none;
+      padding: 14px;
+      border-radius: 10px;
+      font-weight: 600;
+      font-size: 15px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    
+    .login-btn:hover {
+      background: #22c55e;
+    }
+    
+    .login-error {
+      color: #ef4444;
+      font-size: 13px;
+      margin-top: 8px;
+      display: none;
+    }
+    
+    .login-error.show {
+      display: block;
+    }
+    
+    .header {
+      text-align: center;
+      margin-bottom: 28px;
+    }
+    
+    .title {
+      font-size: clamp(26px, 4vw, 32px);
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 12px;
+      letter-spacing: -0.02em;
+    }
+    
+    .tabs {
+      display: flex;
+      justify-content: center;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    
+    .tab {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+      transition: all 0.2s;
+    }
+    
+    .tab.active {
+      background: #4ade80;
+      color: #000;
+    }
+    
+    .list {
+      max-width: 1120px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    
+    .card {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 14px;
+      padding: 20px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+    
+    .card.confirmed {
+      border-color: rgba(74, 222, 128, 0.3);
+      background: rgba(74, 222, 128, 0.05);
+    }
+    
+    .info {
+      flex: 1;
+      min-width: 200px;
+    }
+    
+    .label {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.55);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 4px;
+    }
+    
+    .value {
+      font-size: 16px;
+      color: rgba(255, 255, 255, 0.95);
+      font-weight: 600;
+    }
+    
+    .status {
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    
+    .status.pending {
+      background: rgba(251, 191, 36, 0.2);
+      color: #fbbf24;
+    }
+    
+    .status.confirmed {
+      background: rgba(74, 222, 128, 0.2);
+      color: #4ade80;
+    }
+    
+    .confirm-btn {
+      background: #4ade80;
+      color: #000;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 10px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    
+    .confirm-btn:hover {
+      background: #22c55e;
+    }
+    
+    .empty-state {
+      max-width: 500px;
+      margin: 60px auto;
+      text-align: center;
+    }
+    
+    .empty-icon {
+      font-size: 64px;
+      opacity: 0.2;
+      margin-bottom: 20px;
+    }
+    
+    .empty-text {
+      color: rgba(255, 255, 255, 0.6);
+    }
+  </style>
+</head>
+<body>
+  <div id="login-screen">
+    <div class="login-container">
+      <div class="login-icon">🔒</div>
+      <h1 class="login-title">Admin Panel</h1>
+      <p class="login-subtitle">
+        <span>🔐</span>
+        Reserved for Administrator only
+      </p>
+      <form class="login-form" onsubmit="handleLogin(event)">
+        <input 
+          type="text" 
+          class="login-input" 
+          id="password-input"
+          placeholder="Enter admin password..."
+          required
+        />
+        <button type="submit" class="login-btn">Login</button>
+        <div class="login-error" id="login-error">
+          ❌ Incorrect password. Please try again.
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="admin-panel" style="display: none;">
+    <div class="header">
+      <h1 class="title">Admin - Payments</h1>
+    </div>
+    
+    <div class="tabs">
+      <button class="tab active" onclick="filterPayments('all')">All</button>
+      <button class="tab" onclick="filterPayments('pending')">Pending</button>
+      <button class="tab" onclick="filterPayments('confirmed')">Confirmed</button>
+    </div>
+    
+    <div id="payments-list" class="list">
+      <!-- Payments will be loaded here -->
+    </div>
+  </div>
+  
+  <script>
+    let currentFilter = 'all';
+    
+    async function handleLogin(event) {
+      event.preventDefault();
+      const password = document.getElementById('password-input').value;
+      const errorElement = document.getElementById('login-error');
+      
+      if (window.electronAPI) {
+        try {
+          const isValid = await window.electronAPI.verifyAdminPassword(password);
+          if (isValid) {
+            document.getElementById('login-screen').style.display = 'none';
+            document.getElementById('admin-panel').style.display = 'block';
+            loadPayments();
+          } else {
+            errorElement.classList.add('show');
+            setTimeout(() => errorElement.classList.remove('show'), 3000);
+          }
+        } catch (err) {
+          console.error('Login error:', err);
+          errorElement.textContent = '❌ Error during login. Please try again.';
+          errorElement.classList.add('show');
+        }
+      } else {
+        errorElement.textContent = '❌ System error. Please restart the app.';
+        errorElement.classList.add('show');
+      }
+    }
+    
+    function filterPayments(filter) {
+      currentFilter = filter;
+      document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+      event.target.classList.add('active');
+      loadPayments();
+    }
+    
+    function loadPayments() {
+      if (window.electronAPI) {
+        window.electronAPI.getPendingPayments().then(payments => {
+          renderPayments(payments || []);
+        }).catch(err => {
+          console.error('Error loading payments:', err);
+        });
+      } else {
+        console.error('electronAPI not available');
+      }
+    }
+    
+    function renderPayments(payments) {
+      const list = document.getElementById('payments-list');
+      
+      let filteredPayments = payments;
+      if (currentFilter === 'pending') {
+        filteredPayments = payments.filter(p => p.status === 'pending');
+      } else if (currentFilter === 'confirmed') {
+        filteredPayments = payments.filter(p => p.status === 'confirmed');
+      }
+      
+      if (filteredPayments.length === 0) {
+        list.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-icon">📭</div>
+            <div class="empty-text">No payments found</div>
+          </div>
+        `;
+        return;
+      }
+      
+      list.innerHTML = filteredPayments.map(payment => `
+        <div class="card ${payment.status === 'confirmed' ? 'confirmed' : ''}">
+          <div class="info">
+            <div class="label">User</div>
+            <div class="value">${payment.userName}</div>
+          </div>
+          <div class="info">
+            <div class="label">Plan</div>
+            <div class="value">${payment.plan}</div>
+          </div>
+          <div class="info">
+            <div class="label">Amount</div>
+            <div class="value">¥${payment.amount}</div>
+          </div>
+          <div class="info">
+            <div class="label">Method</div>
+            <div class="value">${payment.method}</div>
+          </div>
+          <div class="info">
+            <div class="label">Date</div>
+            <div class="value">${payment.date ? new Date(payment.date).toLocaleString() : 'Unknown'}</div>
+          </div>
+          <div class="info">
+            <div class="label">Status</div>
+            <div class="status ${payment.status}">
+              ${payment.status === 'confirmed' ? 'Plan Started' : 'Pending'}
+            </div>
+          </div>
+          ${payment.status === 'pending' ? `
+          <button class="confirm-btn" onclick="confirmPayment(${payment.id})">
+            ✓ Confirm Payment
+          </button>
+          ` : ''}
+        </div>
+      `).join('');
+    }
+    
+    function confirmPayment(paymentId) {
+      if (window.electronAPI) {
+        window.electronAPI.confirmPayment(paymentId);
+        setTimeout(loadPayments, 500);
+      }
+    }
+    
+    // Auto-refresh every 5 seconds
+    let refreshInterval;
+  </script>
+</body>
+</html>

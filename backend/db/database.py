@@ -5,12 +5,26 @@ import os
 
 load_dotenv()
 
+db_host = os.getenv('DB_HOST', '127.0.0.1')
+db_port = int(os.getenv('DB_PORT', 5432))
+db_username = os.getenv('DB_USERNAME', 'postgres')
+db_password = os.getenv('DB_PASSWORD', '')
+db_database = os.getenv('DB_DATABASE', 'neuralagent')
 
-DATABASE_URL = ('postgresql://' + os.getenv('DB_USERNAME') + ':' + os.getenv('DB_PASSWORD') +
-                '@' + os.getenv('DB_HOST') + ':' + os.getenv('DB_PORT') + '/' + os.getenv('DB_DATABASE')) \
-    if not os.getenv('DB_CONNECTION_STRING') else os.getenv('DB_CONNECTION_STRING')
+DATABASE_URL = f"postgresql+psycopg2://{db_username}:{db_password}@{db_host}:{db_port}/{db_database}"
 
-engine = create_engine(DATABASE_URL, echo=True)
+engine = create_engine(
+    DATABASE_URL, 
+    echo=True,
+    connect_args={
+        "host": db_host,
+        "port": db_port,
+        "user": db_username,
+        "password": db_password,
+        "dbname": db_database,
+        "client_encoding": "utf8"
+    }
+)
 
 SessionLocal = sessionmaker(class_=Session, bind=engine, autocommit=False, autoflush=False)
 

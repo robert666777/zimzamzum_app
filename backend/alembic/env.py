@@ -8,6 +8,7 @@ from sqlalchemy import pool
 from alembic import context
 
 from db import models
+from models.automation import Automation  # noqa: F401
 
 import os
 from dotenv import load_dotenv
@@ -35,6 +36,8 @@ target_metadata = SQLModel.metadata
 
 
 def get_db_url():
+    if os.getenv('DB_CONNECTION_STRING'):
+        return os.getenv('DB_CONNECTION_STRING')
     return ('postgresql://' + os.getenv('DB_USERNAME') + ':' + os.getenv('DB_PASSWORD') +
             '@' + os.getenv('DB_HOST') + ':' + os.getenv('DB_PORT') + '/' + os.getenv('DB_DATABASE'))
 

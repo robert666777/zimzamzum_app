@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { useSelector, useDispatch } from 'react-redux';
 import axios from '../utils/axios';
@@ -8,8 +8,8 @@ import ChatMessage from '../components/ChatMessage';
 import { FlexSpacer } from '../components/Elements/SmallElements';
 import NATextArea from '../components/Elements/TextAreas';
 import { IconButton } from '../components/Elements/Button';
-import { MdEdit, MdDelete } from 'react-icons/md';
-import { FaArrowAltCircleUp, FaStopCircle } from 'react-icons/fa';
+import { MdEdit, MdDelete, MdArrowUpward, MdApps, MdAdd } from 'react-icons/md';
+import { FaStopCircle } from 'react-icons/fa';
 import ClipLoader from 'react-spinners/ClipLoader';
 import { Text } from '../components/Elements/Typography';
 import ThreadDialog from '../components/DataDialogs/ThreadDialog';
@@ -19,6 +19,13 @@ import { MdOutlineSchedule } from 'react-icons/md';
 import { GiBrain } from 'react-icons/gi';
 
 import styled from 'styled-components';
+import { useI18n } from '../i18n/I18nContext';
+import {
+  EDUCATION_PLATFORM_ICON_URL,
+  PLATFORM_LOGO_FALLBACK_URLS,
+  resolvePlatformLogoUrl,
+} from '../utils/educationPlatformIcons';
+import { getUserStorageKey } from '../utils/userStorage';
 
 const ThreadDiv = styled.div`
   flex: 1;
@@ -26,6 +33,7 @@ const ThreadDiv = styled.div`
   flex-direction: column;
   height: 100%;
   overflow: hidden;
+  background: #1a1a1a;
 `;
 
 const ChatContainer = styled.div`
@@ -60,28 +68,174 @@ const ModeToggle = styled.button`
   display: flex;
   align-items: center;
   gap: 6px;
-  background-color: ${({ active }) => (active ? 'rgba(255,255,255,0.1)' : 'transparent')};
-  color: #fff;
-  border: thin solid rgba(255,255,255,0.3);
+  font-family: inherit;
+  background-color: ${({ $active }) =>
+    $active ? 'var(--accent-blue)' : 'transparent'};
+  color: ${({ disabled }) => (disabled ? 'rgba(255,255,255,0.3)' : '#fff')};
+  border: thin solid ${({ $active }) => ($active ? 'var(--accent-blue)' : 'rgba(255,255,255,0.3)')};
   border-radius: 999px;
   padding: 6px 12px;
   font-size: 13px;
   transition: background-color 0.2s ease;
-  cursor: pointer;
+  cursor: ${({ disabled }) => (disabled ? 'not-allowed' : 'pointer')};
 
   &:hover {
-    background-color: rgba(255,255,255,0.1);
+    background-color: ${({ disabled, $active }) => (disabled ? 'transparent' : ($active ? 'var(--accent-blue-hover)' : 'rgba(255,255,255,0.1)'))};
+  }
+`;
+
+const SendCircle = styled.button`
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent-blue);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease;
+
+  &:hover:not(:disabled) {
+    background: var(--accent-blue-hover);
+  }
+
+  &:disabled {
+    opacity: 0.32;
+    cursor: not-allowed;
+  }
+`;
+
+const PopupContainer = styled.div`
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  max-height: 300px;
+  overflow-y: auto;
+  background: #2a2a2a;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  margin-bottom: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  z-index: 100;
+`;
+
+const PopupHeader = styled.div`
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.5);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+`;
+
+const PopupItem = styled.button`
+  width: 100%;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  text-align: left;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.05);
+  }
+`;
+
+const PopupItemIcon = styled.div`
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(37, 99, 235, 0.2);
+  border-radius: 8px;
+  color: #60a5fa;
+`;
+
+const PlatformLogo = styled.div`
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  overflow: hidden;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+`;
+
+const PopupItemContent = styled.div`
+  flex: 1;
+  min-width: 0;
+`;
+
+const PopupItemTitle = styled.div`
+  font-size: 13px;
+  font-weight: 500;
+  color: #fff;
+`;
+
+const PopupItemDescription = styled.div`
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+`;
+
+const PopupFooter = styled.div`
+  padding: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+`;
+
+const PopupFooterButton = styled.button`
+  width: 100%;
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #fff;
+  background: var(--accent-blue);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: background 0.15s ease;
+
+  &:hover {
+    background: var(--accent-blue-hover);
   }
 `;
 
 export default function Thread() {
-  
+  const { t } = useI18n();
+  const user = useSelector((state) => state.user);
+
   const [thread, setThread] = useState(null);
   const [messages, setMessages] = useState([]);
   const [messageText, setMessageText] = useState('');
   const [isSendingMessage, setSendingMessage] = useState(false);
   const [backgroundMode, setBackgroundMode] = useState(false);
   const [thinkingMode, setThinkingMode] = useState(false);
+  const [showPopup, setShowPopup] = useState(false);
+  const [popupType, setPopupType] = useState('automation');
+  const [automations, setAutomations] = useState([]);
+  const [platforms, setPlatforms] = useState([]);
 
   const [isThreadDialogOpen, setThreadDialogOpen] = useState(false);
   const [isDeleteThreadDialogOpen, setDeleteThreadDialogOpen] = useState(false);
@@ -96,7 +250,7 @@ export default function Thread() {
 
   const dispatch = useDispatch();
 
-  const getThread = () => {
+  const getThread = useCallback(() => {
     dispatch(setLoadingDialog(true));
     axios.get(`/threads/${tid}`, {
       headers: { 'Authorization': 'Bearer ' + accessToken }
@@ -109,9 +263,9 @@ export default function Thread() {
         window.location.reload();
       }
     });
-  };
+  }, [tid, accessToken, dispatch]);
 
-  const getThreadMessages = () => {
+  const getThreadMessages = useCallback(() => {
     dispatch(setLoadingDialog(true));
     axios.get(`/threads/${tid}/thread_messages`, {
       headers: { 'Authorization': 'Bearer ' + accessToken }
@@ -124,7 +278,7 @@ export default function Thread() {
         window.location.reload();
       }
     });
-  };
+  }, [tid, accessToken, dispatch]);
 
   const sendMessage = () => {
     if (messageText.length === 0 || isSendingMessage || thread.status === 'working') {
@@ -239,21 +393,19 @@ export default function Thread() {
     }
   };
 
-  const onBGModeToggleChange = async (value) => {
-    if (value) {
-      const ready = await window.electronAPI.isBackgroundModeReady();
-      if (!ready) {
-        window.electronAPI.startBackgroundSetup();
-        return;
-      }
-    }
-    setBackgroundMode(value);
+  const onBGModeToggleChange = () => {
+    // Background mode is disabled - message shown on hover
+  };
+
+  const onThinkingModeToggleChange = (value) => {
+    setThinkingMode(value);
+    window.electronAPI.setLastThinkingModeValue(value.toString());
   };
 
   useEffect(() => {
     getThread();
     getThreadMessages();
-  }, [tid]);
+  }, [getThread, getThreadMessages]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -291,6 +443,61 @@ export default function Thread() {
     };
     asyncTask();
   }, []);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    const STORAGE_KEY = getUserStorageKey('neuralagent.automations.v1', user);
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      try {
+        setAutomations(JSON.parse(saved) || []);
+      } catch (e) {
+        console.error('Failed to load automations:', e);
+      }
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    const PLATFORMS_STORAGE_KEY = getUserStorageKey('neuralagent.platforms.v1', user);
+    const saved = localStorage.getItem(PLATFORMS_STORAGE_KEY);
+    if (saved) {
+      try {
+        setPlatforms(JSON.parse(saved) || []);
+      } catch (e) {
+        console.error('Failed to load platforms:', e);
+      }
+    }
+  }, [user?.id]);
+
+  const handleInputChange = (e) => {
+    const value = e.target.value;
+    setMessageText(value);
+
+    const lastAtIndex = value.lastIndexOf('@');
+    const lastSlashIndex = value.lastIndexOf('/');
+
+    if (lastAtIndex > lastSlashIndex && lastAtIndex === value.length - 1) {
+      setPopupType('platform');
+      setShowPopup(true);
+    } else if (lastSlashIndex > lastAtIndex && lastSlashIndex === value.length - 1) {
+      setPopupType('automation');
+      setShowPopup(true);
+    } else {
+      setShowPopup(false);
+    }
+  };
+
+  const handlePopupItemClick = (item) => {
+    if (popupType === 'automation') {
+      const fullDetails = `Automation: ${item.name}\nDescription: ${item.description || 'None'}\nPlatform: ${item.platform || 'None'}\nTask: ${item.taskDescription || 'None'}`;
+      setMessageText(messageText.slice(0, -1) + ` ${fullDetails} `);
+    } else {
+      const platformDetails = `Platform: ${item.name}\nLogin URL: ${item.login_url || item.loginUrl || 'None'}\nUsername: ${item.username || 'None'}\nPassword: ${item.password || 'None'}`;
+      setMessageText(messageText.slice(0, -1) + ` ${platformDetails} `);
+    }
+    setShowPopup(false);
+  };
 
   return thread !== null ? (
     <>
@@ -333,33 +540,89 @@ export default function Thread() {
         </ChatContainer>
         <div style={{ padding: '15px' }}>
           <SendingContainer>
-            <NATextArea
-              background='transparent'
-              placeholder={'What do you want NeuralAgent to do?'}
-              value={messageText}
-              isDarkMode
-              rows='2'
-              onKeyDown={handleTextEnterKey}
-              onChange={(e) => setMessageText(e.target.value)}
-            />
+            <div style={{ position: 'relative' }}>
+              <NATextArea
+                background='transparent'
+                placeholder={t('home.placeholder')}
+                value={messageText}
+                isDarkMode
+                rows='2'
+                onKeyDown={handleTextEnterKey}
+                onChange={handleInputChange}
+              />
+              {showPopup && (
+                <PopupContainer>
+                  <PopupHeader>
+                    {popupType === 'automation' ? t('home.automations') : t('home.platforms')}
+                  </PopupHeader>
+                  {popupType === 'automation' ? (
+                    <>
+                      {automations.map((automation) => (
+                        <PopupItem key={automation.id || automation.name} onClick={() => handlePopupItemClick(automation)}>
+                          <PopupItemIcon>
+                            <MdApps />
+                          </PopupItemIcon>
+                          <PopupItemContent>
+                            <PopupItemTitle>{automation.name}</PopupItemTitle>
+                            <PopupItemDescription>{automation.description}</PopupItemDescription>
+                          </PopupItemContent>
+                        </PopupItem>
+                      ))}
+                      <PopupFooter>
+                        <PopupFooterButton type="button" onClick={() => navigate('/automations-page')}>
+                          <MdAdd size={16} />
+                          {t('home.createAutomation')}
+                        </PopupFooterButton>
+                      </PopupFooter>
+                    </>
+                  ) : (
+                    <>
+                      {platforms.map((platform) => {
+                        const logoUrl = resolvePlatformLogoUrl(platform.id, platform.logo);
+                        return (
+                          <PopupItem key={platform.id || platform.name} onClick={() => handlePopupItemClick(platform)}>
+                            <PlatformLogo>
+                              <img src={logoUrl} alt={platform.name} />
+                            </PlatformLogo>
+                            <PopupItemContent>
+                              <PopupItemTitle>{platform.name}</PopupItemTitle>
+                              <PopupItemDescription>{platform.login_url || platform.loginUrl}</PopupItemDescription>
+                            </PopupItemContent>
+                          </PopupItem>
+                        );
+                      })}
+                      <PopupFooter>
+                        <PopupFooterButton type="button" onClick={() => navigate('/automations')}>
+                          <MdAdd size={16} />
+                          {t('home.addPlatform')}
+                        </PopupFooterButton>
+                      </PopupFooter>
+                    </>
+                  )}
+                </PopupContainer>
+              )}
+            </div>
             <div style={{ marginTop: '5px', display: 'flex', alignItems: 'center' }}>
               <ToggleContainer>
                 <ModeToggle
-                  active={backgroundMode}
+                  type="button"
+                  $active={backgroundMode}
                   onClick={() => onBGModeToggleChange(!backgroundMode)}
+                  disabled
                 >
                   <MdOutlineSchedule style={{fontSize: '19px'}} />
-                  Background
+                  {t('home.background')}
                 </ModeToggle>
               </ToggleContainer>
               <div style={{width: '10px'}} />
               <ToggleContainer>
                 <ModeToggle
-                  active={thinkingMode}
-                  onClick={() => setThinkingMode(!thinkingMode)}
+                  type="button"
+                  $active={thinkingMode}
+                  onClick={() => onThinkingModeToggleChange(!thinkingMode)}
                 >
                   <GiBrain style={{fontSize: '19px'}} />
-                  Thinking
+                  {t('home.thinking')}
                 </ModeToggle>
               </ToggleContainer>
               <FlexSpacer />
@@ -374,13 +637,14 @@ export default function Thread() {
                     <FaStopCircle />
                   </IconButton>
                 ) : (
-                  <IconButton
-                    iconSize='35px'
-                    color={'#fff'}
+                  <SendCircle
+                    type="button"
                     disabled={messageText.length === 0}
-                    onClick={() => sendMessage()}>
-                    <FaArrowAltCircleUp />
-                  </IconButton>
+                    onClick={() => sendMessage()}
+                    aria-label={t('home.sendAria')}
+                  >
+                    <MdArrowUpward size={22} />
+                  </SendCircle>
                 )
               )}
             </div>

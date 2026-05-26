@@ -1,18 +1,19 @@
+import os
 from langchain_community.document_loaders import UnstructuredPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import WebBaseLoader, YoutubeLoader
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import AzureChatOpenAI
+from utils.llm_provider import get_llm
 
 
-llm = AzureChatOpenAI(
-    azure_deployment='gpt-4.1-mini',
-    api_version='2024-12-01-preview',
-    temperature=0.3,
-    max_tokens=None,
-    timeout=None,
-    max_retries=2,
-)
+# Lazy initialize LLM to avoid loading at import time
+_llm = None
+
+def get_llm_instance():
+    global _llm
+    if _llm is None:
+        _llm = get_llm("suggestor", temperature=0.3, max_tokens=2000)
+    return _llm
 
 
 def fetch_and_summarize_url(url: str) -> str:
@@ -25,7 +26,7 @@ def fetch_and_summarize_url(url: str) -> str:
     full_text = "\n\n".join(doc.page_content for doc in docs)
 
     prompt = ChatPromptTemplate.from_template("Summarize the following:\n\n{input}")
-    chain = prompt | llm
+    chain = prompt | get_llm_instance()
 
     result = chain.invoke({"input": full_text})
     return result.content if hasattr(result, "content") else str(result)
@@ -51,7 +52,7 @@ def fetch_and_summarize_pdf(file_path: str = None, url: str = None) -> str:
     full_text = "\n\n".join(doc.page_content for doc in docs)
 
     prompt = ChatPromptTemplate.from_template("Summarize the following:\n\n{input}")
-    chain = prompt | llm
+    chain = prompt | get_llm_instance()
 
     result = chain.invoke({"input": full_text})
     return result.content if hasattr(result, "content") else str(result)
@@ -71,7 +72,7 @@ def summarize_youtube_video(url: str) -> str:
     full_text = "\n\n".join(doc.page_content for doc in docs)
 
     prompt = ChatPromptTemplate.from_template("Summarize the following:\n\n{input}")
-    chain = prompt | llm
+    chain = prompt | get_llm_instance()
 
     result = chain.invoke({"input": full_text})
     return result.content if hasattr(result, "content") else str(result)

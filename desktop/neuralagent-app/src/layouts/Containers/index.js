@@ -5,6 +5,7 @@ export const AppMainContainer = styled.div`
   display: flex;
   height: 100vh;
   color: white;
+  background: var(--page-background);
 `;
 
 export const OverlayContainer = styled.div`

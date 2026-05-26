@@ -2,7 +2,7 @@ import styled from 'styled-components';
 
 export const Chip = styled.div`
   border-radius: ${props => (props.borderRadius) ? '' + props.borderRadius + 'px' : '0px'};
-  background: ${props => (props.color && !props.outlined) ? (props.color) : (props.outlined ? 'transparent' : 'var(--primary-color)')};
+  background: ${props => (props.color && !props.outlined) ? (props.color) : (props.outlined ? 'transparent' : 'var(--accent-blue)')};
   padding: ${props => props.padding ? props.padding : '0px'};
   color: ${props => (props.outlined && props.color) ? props.color : (props.dark) ? '#fff' : '#000'};
   text-decoration: none;

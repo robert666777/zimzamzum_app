@@ -1,7 +1,7 @@
 {
-  "name": "neuralagent-desktop",
+  "name": "zimzamzum-desktop",
   "version": "1.5.2",
-  "description": "NeuralAgent Electron Desktop Application",
+  "description": "ZimZamZum Electron Desktop Application",
   "license": "ISC",
   "author": "",
   "type": "module",
@@ -15,11 +15,14 @@
     "build:agent:nuitko": "\"aiagent\\venv\\Scripts\\nuitka\" ---standalone --onefile --lto=no --output-dir=agent_build/ --output-filename=agent --assume-yes-for-downloads --include-package=comtypes aigent/main.py",
     "build:suggestor:nuitko": "\"aiagent\\venv\\Scripts\\nuitka\" ---standalone --onefile --lto=no --output-dir=agent_build/ --output-filename=suggestor --assume-yes-for-downloads --include-package=comtypes aigent/suggestor.py",
     "build": "npm run react-build && electron-builder",
+    "electron:build": "electron-builder",
+    "electron:build:win": "electron-builder --win",
+    "electron:build:mac": "electron-builder --mac",
     "dev": "electron ."
   },
   "build": {
     "appId": "com.getneuralagent.desktop",
-    "productName": "NeuralAgent",
+    "productName": "ZimZamZum",
     "directories": {
       "buildResources": "assets",
       "output": "dist"

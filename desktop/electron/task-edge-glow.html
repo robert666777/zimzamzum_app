@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ZimZamZum Task Edge Glow</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
+      pointer-events: none;
+    }
+
+    .edge-frame {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    .edge-top,
+    .edge-bottom,
+    .edge-left,
+    .edge-right {
+      position: absolute;
+      pointer-events: none;
+    }
+
+    .edge-top {
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 90px;
+      background: linear-gradient(
+        to bottom,
+        rgba(37, 99, 235, 0.72) 0%,
+        rgba(59, 130, 246, 0.38) 35%,
+        rgba(59, 130, 246, 0.08) 70%,
+        transparent 100%
+      );
+      box-shadow: 0 0 28px 6px rgba(59, 130, 246, 0.45);
+    }
+
+    .edge-bottom {
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 90px;
+      background: linear-gradient(
+        to top,
+        rgba(37, 99, 235, 0.72) 0%,
+        rgba(59, 130, 246, 0.38) 35%,
+        rgba(59, 130, 246, 0.08) 70%,
+        transparent 100%
+      );
+      box-shadow: 0 0 28px 6px rgba(59, 130, 246, 0.45);
+    }
+
+    .edge-left {
+      top: 0;
+      bottom: 0;
+      left: 0;
+      width: 90px;
+      background: linear-gradient(
+        to right,
+        rgba(37, 99, 235, 0.72) 0%,
+        rgba(59, 130, 246, 0.38) 35%,
+        rgba(59, 130, 246, 0.08) 70%,
+        transparent 100%
+      );
+      box-shadow: 0 0 28px 6px rgba(59, 130, 246, 0.45);
+    }
+
+    .edge-right {
+      top: 0;
+      bottom: 0;
+      right: 0;
+      width: 90px;
+      background: linear-gradient(
+        to left,
+        rgba(37, 99, 235, 0.72) 0%,
+        rgba(59, 130, 246, 0.38) 35%,
+        rgba(59, 130, 246, 0.08) 70%,
+        transparent 100%
+      );
+      box-shadow: 0 0 28px 6px rgba(59, 130, 246, 0.45);
+    }
+
+    .edge-line-top,
+    .edge-line-bottom,
+    .edge-line-left,
+    .edge-line-right {
+      position: absolute;
+      background: rgba(96, 165, 250, 0.95);
+      pointer-events: none;
+    }
+
+    .edge-line-top {
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+    }
+
+    .edge-line-bottom {
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+    }
+
+    .edge-line-left {
+      top: 0;
+      bottom: 0;
+      left: 0;
+      width: 2px;
+    }
+
+    .edge-line-right {
+      top: 0;
+      bottom: 0;
+      right: 0;
+      width: 2px;
+    }
+  </style>
+</head>
+<body>
+  <div class="edge-frame" aria-hidden="true">
+    <div class="edge-top"></div>
+    <div class="edge-bottom"></div>
+    <div class="edge-left"></div>
+    <div class="edge-right"></div>
+    <div class="edge-line-top"></div>
+    <div class="edge-line-bottom"></div>
+    <div class="edge-line-left"></div>
+    <div class="edge-line-right"></div>
+  </div>
+</body>
+</html>

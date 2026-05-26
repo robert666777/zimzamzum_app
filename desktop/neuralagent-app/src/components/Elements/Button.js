@@ -2,7 +2,7 @@ import styled from 'styled-components';
 
 export const Button = styled.button`
   border-radius: ${props => (props.borderRadius) ? '' + props.borderRadius + 'px' : '0px'};
-  background: ${props => (props.color && !props.outlined) ? (props.color) : (props.outlined ? 'transparent' : 'var(--primary-color)')};
+  background: ${props => (props.color && !props.outlined) ? (props.color) : (props.outlined ? 'transparent' : 'var(--accent-blue)')};
   padding: ${props => props.padding ? props.padding : '0px'};
   color: ${props => (props.outlined && props.color) ? props.color : (props.dark) ? '#fff' : '#000'};
   text-decoration: none;
@@ -58,7 +58,7 @@ export const IconButton = styled.div`
 export const AvatarButton = styled.div`
   width: ${props => props.size ? props.size : '50px'};
   height: ${props => props.size ? props.size : '50px'};
-  background: ${props => props.color ? props.color : 'var(--primary-color)'};
+  background: ${props => props.color ? props.color : 'var(--accent-blue)'};
   box-shadow: ${props => props.raised ? '0 4pt 8pt rgb(0 0 0 / 20%)' : 'none'};
   cursor: pointer;
   border-radius: 50%;

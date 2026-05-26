@@ -1,11 +1,11 @@
-const SERVER_DNS = process.env.REACT_APP_PROTOCOL + '://' + process.env.REACT_APP_DNS;
-const WEBSOCKET_DNS = process.env.REACT_APP_WEBSOCKET_PROTOCOL + '://' + process.env.REACT_APP_DNS;
+const SERVER_DNS = process.env.REACT_APP_PROTOCOL + '://' + process.env.REACT_APP_DNS || 'http://127.0.0.1:8000';
+const WEBSOCKET_DNS = process.env.REACT_APP_WEBSOCKET_PROTOCOL + '://' + process.env.REACT_APP_DNS || 'ws://127.0.0.1:8000';
 
 const constants = {
   BASE_URL: SERVER_DNS + '/apps',
   WEBSOCKET_URL: WEBSOCKET_DNS + '/apps',
   API_KEY: process.env.REACT_APP_API_KEY,
-  APP_NAME: 'NeuralAgent',
+  APP_NAME: 'zimzamzum',
   NEURALAGENT_LINK: 'https://www.getneuralagent.com',
   GENERAL_ERROR: 'Something wrong happened, please try again.',
   status: {

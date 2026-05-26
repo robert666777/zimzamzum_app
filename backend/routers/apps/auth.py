@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, status
 from sqlmodel import Session, select
-from db.models import User, UserType, LoginSession
-from schemas.auth import UserInfo, UserCreate, UserAuth, Logout, RefreshToken, LoginWithGoogle
+from db.models import User, UserType, LoginSession, PhoneVerificationEntry
+from schemas.auth import UserInfo, UserCreate, UserAuth, Logout, RefreshToken, LoginWithGoogle, PhoneLogin, PhoneSignup, SendSmsCode
 from db.database import get_session
 from utils.security import verify_password, hash_password
+from utils.referral_helpers import generate_unique_referral_code, normalize_referral_code, add_referral_reward_day
 from utils.auth_helper import create_login_session, create_token_from_user, decode_token, is_session_valid
+from utils.sms_helper import send_sms_verification_code
 import datetime
 from utils import constants
 from utils.procedures import CustomError
@@ -17,15 +19,20 @@ router = APIRouter(prefix='/apps/auth', tags=['auth'])
 
 
 @router.post('/login')
-def login_with_email(user_auth: UserAuth, db: Session = Depends(get_session)):
+def login_with_email_or_phone(user_auth: UserAuth, db: Session = Depends(get_session)):
+    user = None
 
-    query = select(User).where(User.email == user_auth.email)
-    user = db.exec(query).first()
+    if user_auth.email:
+        query = select(User).where(User.email == user_auth.email)
+        user = db.exec(query).first()
+    elif user_auth.phone_number:
+        query = select(User).where(User.phone_number == user_auth.phone_number)
+        user = db.exec(query).first()
 
     if not user or not user.password or not verify_password(user_auth.password, user.password) or user.user_type != UserType.NORMAL_USER:
         raise CustomError(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            message='Invalid email or password.'
+            message='Invalid email/phone or password.'
         )
 
     if user.is_blocked:
@@ -44,6 +51,7 @@ def login_with_email(user_auth: UserAuth, db: Session = Depends(get_session)):
         email=user.email,
         image=user.image,
         is_email_verified=user.is_email_verified,
+        phone_number=user.phone_number,
     )
 
     return {
@@ -109,6 +117,14 @@ def login_with_google_desktop(login_google_obj: LoginWithGoogle, db: Session = D
                     is_email_verified=True
                 )
                 db.add(user)
+                db.flush()
+                user.referral_code = generate_unique_referral_code(db)
+                ref_input = normalize_referral_code(login_google_obj.referral_code)
+                if ref_input:
+                    referrer = db.exec(select(User).where(User.referral_code == ref_input)).first()
+                    if referrer and referrer.id != user.id:
+                        user.referred_by_user_id = referrer.id
+                        add_referral_reward_day(referrer, db)
                 db.commit()
                 db.refresh(user)
 
@@ -142,6 +158,7 @@ def user_info(db: Session = Depends(get_session), user: User = Depends(get_curre
         email=user.email,
         image=user.image,
         is_email_verified=user.is_email_verified,
+        phone_number=user.phone_number,
     )
 
     return user_data
@@ -149,23 +166,45 @@ def user_info(db: Session = Depends(get_session), user: User = Depends(get_curre
 
 @router.post('/signup')
 def signup(user_create: UserCreate, db: Session = Depends(get_session)):
+    existing_user = None
 
-    query = select(User).where(User.email == user_create.email)
-    existing_user = db.exec(query).first()
-
-    if existing_user:
-        raise CustomError(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            message='Email already registered'
-        )
+    if user_create.email:
+        existing_user = db.exec(select(User).where(User.email == user_create.email)).first()
+        if existing_user:
+            raise CustomError(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                message='Email already registered'
+            )
+    elif user_create.phone_number:
+        existing_user = db.exec(select(User).where(User.phone_number == user_create.phone_number)).first()
+        if existing_user:
+            raise CustomError(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                message='Phone number already registered'
+            )
 
     hashed_password = hash_password(user_create.password)
+    
+    email_to_use = user_create.email if user_create.email else f'{user_create.phone_number}@neuralagent.app'
+    
     new_user = User(
         name=user_create.name,
-        email=user_create.email,
+        email=email_to_use,
+        phone_number=user_create.phone_number,
         password=hashed_password,
     )
     db.add(new_user)
+    db.flush()
+
+    new_user.referral_code = generate_unique_referral_code(db)
+
+    ref_input = normalize_referral_code(user_create.referral_code)
+    if ref_input:
+        referrer = db.exec(select(User).where(User.referral_code == ref_input)).first()
+        if referrer and referrer.id != new_user.id:
+            new_user.referred_by_user_id = referrer.id
+            add_referral_reward_day(referrer, db)
+
     db.commit()
     db.refresh(new_user)
 
@@ -179,6 +218,7 @@ def signup(user_create: UserCreate, db: Session = Depends(get_session)):
         email=new_user.email,
         image=new_user.image,
         is_email_verified=new_user.is_email_verified,
+        phone_number=new_user.phone_number,
     )
 
     # TODO Send Email Verification
@@ -251,4 +291,151 @@ def refresh_current_token(refresh_obj: RefreshToken, db: Session = Depends(get_s
     return {
         'new_token': new_token,
         'new_refresh': new_refresh
+    }
+
+
+@router.post('/send_sms_code')
+def send_sms_code(sms_code_obj: SendSmsCode, db: Session = Depends(get_session)):
+    phone_number = sms_code_obj.phone_number
+    
+    if len(phone_number) < 10:
+        raise CustomError(status.HTTP_400_BAD_REQUEST, 'Invalid phone number')
+
+    expires_at = datetime.datetime.now(datetime.UTC) + datetime.timedelta(minutes=5)
+    
+    existing_entry = db.exec(
+        select(PhoneVerificationEntry).where(PhoneVerificationEntry.phone_number == phone_number)
+    ).first()
+    
+    if existing_entry:
+        db.delete(existing_entry)
+        db.commit()
+
+    new_entry = PhoneVerificationEntry(
+        phone_number=phone_number,
+        expires_at=expires_at
+    )
+    db.add(new_entry)
+    db.commit()
+    db.refresh(new_entry)
+
+    verification_code = new_entry.verification_code
+    
+    send_sms_verification_code(phone_number, verification_code)
+
+    return {'message': 'Verification code sent'}
+
+
+@router.post('/login_with_sms')
+def login_with_sms(phone_login: PhoneLogin, db: Session = Depends(get_session)):
+    phone_number = phone_login.phone_number
+    verification_code = phone_login.verification_code
+
+    entry = db.exec(
+        select(PhoneVerificationEntry).where(
+            PhoneVerificationEntry.phone_number == phone_number,
+            PhoneVerificationEntry.verification_code == verification_code,
+            PhoneVerificationEntry.is_used == False,
+            PhoneVerificationEntry.expires_at > datetime.datetime.now(datetime.UTC)
+        )
+    ).first()
+
+    if not entry:
+        raise CustomError(status.HTTP_401_UNAUTHORIZED, 'Invalid or expired verification code')
+
+    entry.is_used = True
+    db.add(entry)
+    db.commit()
+
+    user = db.exec(select(User).where(User.phone_number == phone_number)).first()
+
+    if not user:
+        raise CustomError(status.HTTP_404_NOT_FOUND, 'User not found')
+
+    if user.is_blocked:
+        raise CustomError(status.HTTP_403_FORBIDDEN, 'Forbidden')
+
+    exp = datetime.datetime.now(datetime.UTC) + constants.ACCESS_TOKEN_LIFETIME_DELTA
+    login_session = create_login_session(user, db, exp, phone_login.login_session_type)
+    token, refresh_token = create_token_from_user(user, exp, login_session.id)
+
+    user_data = UserInfo(
+        id=user.id,
+        name=user.name,
+        email=user.email,
+        image=user.image,
+        is_email_verified=user.is_email_verified,
+        phone_number=user.phone_number,
+    )
+
+    return {
+        'token': token,
+        'refresh_token': refresh_token,
+        'user': user_data,
+    }
+
+
+@router.post('/signup_with_sms')
+def signup_with_sms(phone_signup: PhoneSignup, db: Session = Depends(get_session)):
+    phone_number = phone_signup.phone_number
+    verification_code = phone_signup.verification_code
+    name = phone_signup.name
+
+    entry = db.exec(
+        select(PhoneVerificationEntry).where(
+            PhoneVerificationEntry.phone_number == phone_number,
+            PhoneVerificationEntry.verification_code == verification_code,
+            PhoneVerificationEntry.is_used == False,
+            PhoneVerificationEntry.expires_at > datetime.datetime.now(datetime.UTC)
+        )
+    ).first()
+
+    if not entry:
+        raise CustomError(status.HTTP_401_UNAUTHORIZED, 'Invalid or expired verification code')
+
+    entry.is_used = True
+    db.add(entry)
+    db.commit()
+
+    existing_user = db.exec(select(User).where(User.phone_number == phone_number)).first()
+    if existing_user:
+        raise CustomError(status.HTTP_400_BAD_REQUEST, 'Phone number already registered')
+
+    new_user = User(
+        name=name,
+        email=f'{phone_number}@neuralagent.app',
+        phone_number=phone_number,
+    )
+    db.add(new_user)
+    db.flush()
+
+    new_user.referral_code = generate_unique_referral_code(db)
+
+    ref_input = normalize_referral_code(phone_signup.referral_code)
+    if ref_input:
+        referrer = db.exec(select(User).where(User.referral_code == ref_input)).first()
+        if referrer and referrer.id != new_user.id:
+            new_user.referred_by_user_id = referrer.id
+            add_referral_reward_day(referrer, db)
+
+    db.commit()
+    db.refresh(new_user)
+
+    exp = datetime.datetime.now(datetime.UTC) + constants.ACCESS_TOKEN_LIFETIME_DELTA
+    login_session = create_login_session(new_user, db, exp, phone_signup.login_session_type)
+    token, refresh_token = create_token_from_user(new_user, exp, login_session.id)
+
+    user_data = UserInfo(
+        id=new_user.id,
+        name=new_user.name,
+        email=new_user.email,
+        image=new_user.image,
+        is_email_verified=new_user.is_email_verified,
+        phone_number=new_user.phone_number,
+    )
+
+    return {
+        'token': token,
+        'refresh_token': refresh_token,
+        'user': user_data,
     }

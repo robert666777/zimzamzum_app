@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import styled, { keyframes } from 'styled-components';
-import neuralagent_logo_ic_only_white from '../assets/neuralagent_logo_ic_only_white.png'
+import { useNavigate } from 'react-router-dom';
+import zimzamzum_logo from '../assets/zimzamzum_logo_ic_only_white.png'
 import { AvatarButton, IconButton } from '../components/Elements/Button';
 import { useSelector } from 'react-redux';
 import axios from '../utils/axios';
@@ -10,7 +11,7 @@ import { MdOutlineSchedule } from 'react-icons/md';
 import { GiBrain } from 'react-icons/gi';
 
 const Container = styled.div`
-  background: transparent;
+  background: #000000;
   padding: 0px 8px;
   display: flex;
   flex-direction: column;
@@ -44,51 +45,64 @@ const Spinner = styled.div`
   animation: ${spin} 1s linear infinite;
 `;
 
-const SuggestionsPanel = styled.div`
+const RecentTasksSection = styled.div`
   margin-top: 5px;
   background-color: rgba(255, 255, 255, 0.05);
   border-radius: 8px;
-  padding: 10px;
-  flex: 1;
+  max-height: 300px;
   overflow-y: auto;
+
+  &::-webkit-scrollbar {
+    width: 4px;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 2px;
+  }
 `;
 
-const SuggestionItem = styled.div`
-  padding: 8px;
-  margin-bottom: 6px;
-  background: rgba(255,255,255,0.07);
+const RecentTasksList = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px;
+`;
+
+const TaskItem = styled.button`
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
   border-radius: 6px;
-  color: white;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.88);
   font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  text-align: left;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: background 0.15s ease;
 
   &:hover {
-    background: rgba(255,255,255,0.15);
+    background: rgba(255, 255, 255, 0.06);
+    color: #fff;
   }
 `;
 
-const shimmer = keyframes`
-  0% {
-    background-position: -200px 0;
-  }
-  100% {
-    background-position: calc(200px + 100%) 0;
-  }
+const EmptyTasks = styled.div`
+  padding: 20px 12px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.38);
+  text-align: center;
 `;
 
-const SkeletonItem = styled.div`
-  height: 36px;
-  margin-bottom: 6px;
-  border-radius: 6px;
-  background: linear-gradient(
-    90deg,
-    rgba(255, 255, 255, 0.07) 25%,
-    rgba(255, 255, 255, 0.15) 50%,
-    rgba(255, 255, 255, 0.07) 75%
-  );
-  background-size: 200px 100%;
-  animation: ${shimmer} 1.2s infinite;
+const SectionLabel = styled.div`
+  padding: 8px 12px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 `;
 
 const ToggleContainer = styled.div`
@@ -100,17 +114,19 @@ const ModeToggle = styled.button`
   display: flex;
   align-items: center;
   gap: 4px;
-  background-color: ${({ active }) => (active ? 'rgba(255,255,255,0.1)' : 'transparent')};
-  color: #fff;
-  border: thin solid rgba(255,255,255,0.2);
+  background-color: ${({ active }) => (active ? 'var(--accent-blue)' : 'transparent')};
+  color: ${({ disabled }) => (disabled ? 'rgba(255, 255, 255, 0.4)' : '#fff')};
+  border: thin solid ${({ active, disabled }) =>
+    disabled ? 'rgba(255, 255, 255, 0.1)' : (active ? 'var(--accent-blue)' : 'rgba(255,255,255,0.2)')};
   border-radius: 999px;
   padding: 4px 10px;
   font-size: 11.5px;
-  transition: background-color 0.2s ease;
-  cursor: pointer;
+  transition: all 0.2s ease;
+  cursor: ${({ disabled }) => (disabled ? 'not-allowed' : 'pointer')};
 
   &:hover {
-    background-color: rgba(255,255,255,0.1);
+    background-color: ${({ active, disabled }) =>
+      disabled ? 'transparent' : (active ? 'var(--accent-blue-hover)' : 'rgba(255,255,255,0.1)')};
   }
 
   svg {
@@ -124,11 +140,26 @@ export default function Overlay() {
   const [messageText, setMessageText] = useState('');
   const [loading, setLoading] = useState(false);
   const [runningThreadId, setRunningThreadId] = useState(null);
-  const [suggestions, setSuggestions] = useState([]);
   const [backgroundMode, setBackgroundMode] = useState(false);
   const [thinkingMode, setThinkingMode] = useState(false);
+  const [threads, setThreads] = useState([]);
 
   const accessToken = useSelector(state => state.accessToken);
+  const navigate = useNavigate();
+
+  const fetchThreads = async () => {
+    if (!accessToken) return;
+    try {
+      const response = await axios.get('/threads', {
+        headers: {
+          'Authorization': 'Bearer ' + accessToken,
+        }
+      });
+      setThreads(response.data || []);
+    } catch (error) {
+      console.error('Failed to fetch threads:', error);
+    }
+  };
 
   const executeTask = () => {
     if (loading) {
@@ -137,12 +168,14 @@ export default function Overlay() {
     createThread();
   };
 
-  const executeSuggestion = (prompt) => {
-    if (loading) return;
-
-    window.electronAPI.expandOverlay(false);
+  const handleRecentTaskClick = (threadId) => {
     setShowSuggestions(false);
-    createThread(prompt);
+    setExpanded(false);
+    if (window.electronAPI?.openThreadInMainApp) {
+      window.electronAPI.openThreadInMainApp(threadId);
+    } else {
+      navigate(`/threads/${threadId}`);
+    }
   };
 
   const toggleOverlay = async () => {
@@ -151,9 +184,7 @@ export default function Overlay() {
         window.electronAPI.expandOverlay(true);
         setExpanded(true);
         setShowSuggestions(true);
-        if (suggestions.length === 0) {
-          getSuggestions();
-        }
+        fetchThreads();
       } else {
         window.electronAPI.expandOverlay(false);
         setExpanded(true);
@@ -161,16 +192,8 @@ export default function Overlay() {
     } else {
       window.electronAPI.minimizeOverlay();
       setExpanded(false);
-      setSuggestions([]);
       setShowSuggestions(false);
     }
-  };
-
-  const getSuggestions = async () => {
-    const suggestedTasks = await window.electronAPI.getSuggestions(
-      process.env.REACT_APP_PROTOCOL + '://' + process.env.REACT_APP_DNS,
-    );
-    setSuggestions(suggestedTasks.suggestions);
   };
 
   const cancelRunningTask = (tid) => {
@@ -231,15 +254,8 @@ export default function Overlay() {
     });
   };
 
-  const onBGModeToggleChange = async (value) => {
-    if (value) {
-      const ready = await window.electronAPI.isBackgroundModeReady();
-      if (!ready) {
-        window.electronAPI.startBackgroundSetup();
-        return;
-      }
-    }
-    setBackgroundMode(value);
+  const onBGModeToggleChange = () => {
+    // Background mode is disabled - message shown on hover
   };
 
   useEffect(() => {
@@ -259,8 +275,6 @@ export default function Overlay() {
         setRunningThreadId(null);
         window.electronAPI.expandOverlay(true);
         setShowSuggestions(true);
-        setSuggestions([]);
-        getSuggestions();
       });
     }
   }, []);
@@ -283,22 +297,34 @@ export default function Overlay() {
 
   return (
     <Container>
-      <div style={{display: 'flex', alignItems: 'center', width: '100%', height: '60px'}}>
-        <AvatarButton onClick={() => toggleOverlay()}>
+      <div style={{display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '60px'}}>
+        <button
+          onClick={() => toggleOverlay()}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            padding: 0,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
           <img
-            src={neuralagent_logo_ic_only_white}
-            alt='NeuralAgent'
-            height={30}
+            src={zimzamzum_logo}
+            alt='zimzamzum'
+            height={40}
+            width={40}
             style={{userSelect: 'none', pointerEvents: 'none'}}
           />
-        </AvatarButton>
+        </button>
         {expanded && (
           <>
             <div style={{width: '10px'}} />
             <Input
               value={messageText}
               onChange={(e) => setMessageText(e.target.value)}
-              placeholder="Ask NeuralAgent..."
+              placeholder="Ask zimzamzum..."
               onKeyDown={(e) => e.key === 'Enter' && executeTask()}
             />
             {!loading && runningThreadId === null && (
@@ -306,8 +332,10 @@ export default function Overlay() {
                 <div style={{width: '5px'}} />
                 <ToggleContainer>
                   <ModeToggle
-                    active={backgroundMode}
-                    onClick={() => onBGModeToggleChange(!backgroundMode)}
+                    active={false}
+                    onClick={() => onBGModeToggleChange()}
+                    disabled
+                    title="Coming soon! This feature allows zimzamzum to run tasks in the background while you continue working on your computer."
                   >
                     <MdOutlineSchedule />
                   </ModeToggle>
@@ -317,6 +345,7 @@ export default function Overlay() {
                   <ModeToggle
                     active={thinkingMode}
                     onClick={() => setThinkingMode(!thinkingMode)}
+                    title="Extended Thinking Mode: Enables deeper analysis for complex tasks."
                   >
                     <GiBrain />
                   </ModeToggle>
@@ -337,20 +366,23 @@ export default function Overlay() {
         )}
       </div>
       {expanded && showSuggestions && (
-        <SuggestionsPanel>
-          {suggestions.length === 0
-            ? Array.from({ length: 7 }).map((_, idx) => (
-                <SkeletonItem key={idx} />
-              ))
-            : suggestions.map((s, idx) => (
-                <SuggestionItem
-                  key={idx}
-                  onClick={() => executeSuggestion(s.ai_prompt)}
+        <RecentTasksSection>
+          <SectionLabel>Recent Tasks</SectionLabel>
+          {threads.length === 0 ? (
+            <EmptyTasks>No recent tasks</EmptyTasks>
+          ) : (
+            <RecentTasksList>
+              {threads.slice(0, 20).map((thread) => (
+                <TaskItem
+                  key={thread.id}
+                  onClick={() => handleRecentTaskClick(thread.id)}
                 >
-                  {s.title}
-                </SuggestionItem>
+                  {thread.title || 'Untitled task'}
+                </TaskItem>
               ))}
-        </SuggestionsPanel>
+            </RecentTasksList>
+          )}
+        </RecentTasksSection>
       )}
     </Container>
   );

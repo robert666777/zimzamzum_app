@@ -51,6 +51,13 @@ export function setSuccess(isSuccess, successMsg='') {
   };
 }
 
+export function setThreads(threads) {
+  return {
+    type: 'SET_THREADS',
+    threads: threads,
+  };
+}
+
 const defaultState = {
   isAppLoading: true,
   isFullLoading: false,
@@ -61,6 +68,7 @@ const defaultState = {
   errorMessage: '',
   isSuccess: false,
   successMsg: '',
+  threads: [],
 }
 
 function reducer(state=defaultState, action) {
@@ -92,6 +100,9 @@ function reducer(state=defaultState, action) {
         newState.successMsg = action.successMsg;
       }
       newState.isSuccess = action.isSuccess;
+      return newState;
+    case 'SET_THREADS':
+      newState.threads = action.threads;
       return newState;
     default:
       break;

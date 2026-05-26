@@ -11,5 +11,6 @@ pywin32
 psutil
 # pywinsandbox
 uiautomation
+python-dotenv
 # pyobjc
 # pyatspi

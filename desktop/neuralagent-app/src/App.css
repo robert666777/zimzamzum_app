@@ -6,7 +6,10 @@
 
 :root {
   color-scheme: dark;
-  --page-background: #15202B;
+  --page-background: #1a1a1a;
+  /* Primary CTA (matches sidebar "New Task") */
+  --accent-blue: #2135ad;
+  --accent-blue-hover: #2a42c4;
   --primary-color: #101743;
   --secondary-color: #c5c5c4;
   --third-color: #252525;
@@ -20,7 +23,7 @@
   --max-login-width: 1100px;
   --max-page-width: 1200px;
   --light-gray-background: #F5F5F5;
-  --dark-theme-background: #15202B; /* #121418; */ /* #1e1e1e; */
+  --dark-theme-background: #1a1a1a;
   --navigation-bar-color: #191B1F;
   --card-color: #191B1F;
   --code-editor-background: #1E1E1E;

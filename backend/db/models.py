@@ -4,6 +4,7 @@ import datetime
 from enum import Enum
 from sqlalchemy import Column, Text
 from utils.procedures import generate_user_id, generate_ver_token, generate_random_number, generate_thread_id
+from models.automation import Automation
 
 
 class UserType(str, Enum):
@@ -18,6 +19,7 @@ class User(SQLModel, table=True):
     name: str
     image: Optional[str]
     email: str = Field(index=True, unique=True)
+    phone_number: Optional[str] = Field(index=True)
     password: Optional[str]
     google_user_id: Optional[str]
     google_token: Optional[str]
@@ -25,12 +27,18 @@ class User(SQLModel, table=True):
     is_email_verified: bool = Field(default=False)
     is_blocked: bool = Field(default=False)
 
+    referral_code: Optional[str] = Field(default=None, index=True, unique=True)
+    referred_by_user_id: Optional[str] = Field(default=None, foreign_key='users.id')
+    referral_reward_until: Optional[datetime.datetime] = Field(default=None)
+    last_referral_reward_count: Optional[int] = Field(default=0)
+
     created_at: Optional[datetime.datetime] = Field(default_factory=datetime.datetime.now)
     updated_at: Optional[datetime.datetime] = Field(default_factory=datetime.datetime.now,
                                                     sa_column_kwargs={'onupdate': datetime.datetime.now})
 
     login_sessions: List['LoginSession'] = Relationship(back_populates='user')
     threads: List['Thread'] = Relationship(back_populates='user')
+    automations: List['Automation'] = Relationship(back_populates='user')
 
 
 class LoginSessionTypes(str, Enum):
@@ -65,6 +73,20 @@ class EmailVerificationEntry(SQLModel, table=True):
     email: str = Field(unique=True, index=True)
     verification_token: str = Field(default_factory=generate_ver_token)
     verification_code: str = Field(default_factory=generate_random_number)
+
+    created_at: Optional[datetime.datetime] = Field(default_factory=datetime.datetime.now)
+    updated_at: Optional[datetime.datetime] = Field(default_factory=datetime.datetime.now,
+                                                    sa_column_kwargs={'onupdate': datetime.datetime.now})
+    expires_at: datetime.datetime
+
+
+class PhoneVerificationEntry(SQLModel, table=True):
+    __tablename__ = 'phone_verification_entries'
+
+    id: Optional[int] = Field(primary_key=True, index=True, nullable=False)
+    phone_number: str = Field(index=True)
+    verification_code: str = Field(default_factory=generate_random_number)
+    is_used: bool = Field(default=False)
 
     created_at: Optional[datetime.datetime] = Field(default_factory=datetime.datetime.now)
     updated_at: Optional[datetime.datetime] = Field(default_factory=datetime.datetime.now,
