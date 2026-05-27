@@ -9,4 +9,4 @@ RUN apt-get update -y && apt-get install awscli -y
 
 RUN pip install --no-cache-dir --upgrade -r requirements.txt
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80", "--workers", "4"]
+CMD ["sh", "-c", "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 80 --workers 4"]
