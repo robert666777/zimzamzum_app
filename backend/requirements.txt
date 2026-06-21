@@ -28,6 +28,6 @@ anthropic
 transformers
 websockets
 broadcaster
-broadcaster[redis]
+broadcaster[redis]==0.3.1
 asyncio-redis
 requests
