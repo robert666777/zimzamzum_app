@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import styled from 'styled-components';
 import { HiSparkles } from 'react-icons/hi2';
-import { MdCheck, MdRocket, MdSchool, MdWorkspacePremium, MdClose, MdReceipt, MdCalendarToday, MdCheckCircle, MdTimer, MdAddAlert } from 'react-icons/md';
+import { MdCheck, MdStar, MdSchool, MdWorkspacePremium, MdClose, MdReceipt, MdEvent, MdCheckCircle, MdAccessTime, MdNotifications } from 'react-icons/md';
 import { Text } from '../components/Elements/Typography';
 import { Button } from '../components/Elements/Button';
 import { useDispatch, useSelector } from 'react-redux';
@@ -10,6 +10,8 @@ import { useI18n } from '../i18n/I18nContext';
 import { useNavigate } from 'react-router-dom';
 import alipayQR from '../assets/alipay.png';
 import wechatQR from '../assets/wechat.png';
+import paymentApi from '../utils/paymentApi';
+import { getFreePlanMinutesSnapshot, onFreePlanMinutesUpdated } from '../utils/freePlanMinutes';
 
 // QR codes by plan and payment method
 import alipayQR49 from '../assets/alipay49.png';
@@ -21,7 +23,7 @@ import wechatQR399 from '../assets/wechat399.png';
 
 const plansData = [
   { id: 'free', name: 'Free', price: 0, icon: MdCheck, color: '#6b7280', features: ['1-day free trial on every new account', 'Full access to all features', 'Free during your trial'] },
-  { id: 'starter', name: 'Starter', price: 49, icon: MdRocket, color: '#8b5cf6', features: ['Full access to every feature in zimzamzum', 'Assignments checked, analyzed, saved, submitted, compiled', 'Use it as often as you need – no monthly cap'] },
+  { id: 'starter', name: 'Starter', price: 49, icon: MdStar, color: '#8b5cf6', features: ['Full access to every feature in zimzamzum', 'Assignments checked, analyzed, saved, submitted, compiled', 'Use it as often as you need – no monthly cap'] },
   { id: 'semester', name: 'Semester', price: 199, icon: MdSchool, color: '#06b6d4', features: ['Everything in Starter for a full semester window', 'Daily homework support throughout the whole semester', 'Best value if you only need a single-semester boost'] },
   { id: 'annual', name: 'Annual', price: 399, icon: MdWorkspacePremium, color: '#f59e0b', features: ['Full access for the entire academic year', 'Daily assignments support throughout both semesters', 'Faster responses and priority handling when it matters', 'Lowest equivalent monthly cost'] },
 ];
@@ -381,7 +383,7 @@ const PLAN_CONFIG = [
     id: 'starter',
     accent: 'starter',
     icon: 'starter',
-    Icon: MdRocket,
+    Icon: MdStar,
     price: 49,
     strike: null,
     cta: 'subscribe',
@@ -610,59 +612,208 @@ const ExpirationBtn = styled(Button)`
   }
 `;
 
+const PaymentModal = styled.div`
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  padding: 20px;
+`;
+
+const PaymentContent = styled.div`
+  background: #2a2a2a;
+  border-radius: 20px;
+  padding: 32px;
+  max-width: 420px;
+  width: 100%;
+  text-align: center;
+`;
+
+const PaymentTitle = styled.h2`
+  font-size: 24px;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 12px;
+`;
+
+const PaymentText = styled.p`
+  font-size: 15px;
+  color: rgba(255, 255, 255, 0.8);
+  margin-bottom: 24px;
+  line-height: 1.6;
+`;
+
+const AdminQRCodeContainer = styled.div`
+  background: #fff;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+  display: inline-block;
+  
+  img {
+    width: 200px;
+    height: 200px;
+    border-radius: 8px;
+  }
+`;
+
+const WeChatID = styled.p`
+  font-size: 16px;
+  font-weight: 600;
+  color: #07C160;
+  margin-bottom: 24px;
+`;
+
+const PaymentBtn = styled(Button)`
+  width: 100%;
+  justify-content: center;
+  padding: 14px;
+  border-radius: 12px;
+  font-size: 16px;
+  font-weight: 600;
+  background: #1677FF;
+  color: #fff;
+  border: none;
+  
+  &:hover {
+    background: #4096FF;
+  }
+`;
+
 export default function Upgrade() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const { t, messages } = useI18n();
   const plansCopy = messages.upgradePlans;
   const user = useSelector(state => state.user);
+  const accessToken = useSelector(state => state.accessToken);
 
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [selectedPayment, setSelectedPayment] = useState(null);
   const [showModal, setShowModal] = useState(false);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [userPlan, setUserPlan] = useState('free');
   const [userPayments, setUserPayments] = useState([]);
   const [countdown, setCountdown] = useState({ days: 0, hours: 0, minutes: 0, expired: false });
   const [showExpirationModal, setShowExpirationModal] = useState(false);
   const [planExpired, setPlanExpired] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [remainingMinutes, setRemainingMinutes] = useState(10);
+  const [usedMinutes, setUsedMinutes] = useState(0);
+  const [dailyFreeMinutes, setDailyFreeMinutes] = useState(10);
 
   useEffect(() => {
+    const refreshFreePlanMinutes = async () => {
+      const snapshot = await getFreePlanMinutesSnapshot();
+      setUsedMinutes(snapshot.used);
+      setRemainingMinutes(snapshot.remaining);
+      setDailyFreeMinutes(snapshot.daily);
+    };
+
     const loadUserPlan = async () => {
-      if (window.electronAPI && user?.id) {
-        const plan = await window.electronAPI.getUserPlan(user.id);
-        setUserPlan(plan.plan || 'free');
-        setPlanExpired(plan.isExpired || false);
+      if (user?.id) {
+        let storedPlanData = null;
+        let cd = null;
+        let planId = 'free';
+        
+        // 🌟 PRIORITE : Supabase est la source de vérité pour les plans payants
+        try {
+          const plan = await paymentApi.getUserPlan(accessToken);
+          planId = plan.plan_id || 'free';
+          
+          // Si le plan vient d'expirer, afficher un message
+          if (plan.plan_just_expired) {
+            dispatch(setError(true, t('profile.planExpired')));
+            setTimeout(() => dispatch(setError(false, '')), 10000);
+          }
+          
+          // Calculate countdown from expires_at (pour les plans payants)
+          if (plan.expires_at) {
+            const expireDate = new Date(plan.expires_at);
+            // Vérifier que la date est valide
+            if (!isNaN(expireDate.getTime())) {
+              const now = new Date();
+              const diff = expireDate - now;
+              
+              if (diff > 0) {
+                const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+                const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+                cd = { days, hours, minutes, expired: false };
+              } else {
+                cd = { days: 0, hours: 0, minutes: 0, expired: true };
+              }
+            } else if (planId !== 'free') {
+              // Date invalide mais plan payant : utiliser la période par défaut
+              cd = { days: 30, hours: 0, minutes: 0, expired: false };
+            }
+          } else if (planId !== 'free') {
+            // Si pas de date d'expiration mais ce n'est pas le free plan
+            // Utiliser la période du plan depuis les données
+            if (plan.plan && plan.plan.period_days) {
+              cd = { days: plan.plan.period_days, hours: 0, minutes: 0, expired: false };
+            } else {
+              cd = { days: 30, hours: 0, minutes: 0, expired: false }; // Valeur par défaut
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching user plan from API:', error);
+        }
+        
+        // Fallback sur Electron-store SEULEMENT pour le free plan
+        if (planId === 'free' && window.electronAPI) {
+          storedPlanData = await window.electronAPI.getUserPlan(user.id);
+          const electronCd = await window.electronAPI.getPlanCountdown(user.id);
+          if (electronCd) {
+            cd = electronCd;
+          }
+        }
+        
+        setUserPlan(planId);
+        
+        // Pour le free plan, utiliser les minutes restantes au lieu du countdown
+        if (planId === 'free') {
+          await refreshFreePlanMinutes();
+          return;
+        }
+        
+        if (cd) {
+          setCountdown(cd);
+          if (cd.expired && planId === 'free') {
+            setShowExpirationModal(true);
+          }
+        }
       }
     };
+    
     loadUserPlan();
+    const interval = setInterval(loadUserPlan, 60000);
+    const freePlanInterval = setInterval(refreshFreePlanMinutes, 10000);
+    const handleMinutesUpdate = ({ used, remaining, total }) => {
+      setUsedMinutes(used);
+      setRemainingMinutes(remaining);
+      setDailyFreeMinutes(total);
+    };
+    onFreePlanMinutesUpdated(handleMinutesUpdate);
+    return () => {
+      clearInterval(interval);
+      clearInterval(freePlanInterval);
+    };
   }, [user?.id]);
 
   useEffect(() => {
     const loadUserPayments = async () => {
-      if (window.electronAPI) {
-        const payments = await window.electronAPI.getPendingPayments();
-        const userPays = payments.filter(p => p.userId === user?.id);
-        setUserPayments(userPays);
-      }
+      const payments = await paymentApi.getUserPaymentRequests(accessToken);
+      setUserPayments(payments);
     };
     loadUserPayments();
     const interval = setInterval(loadUserPayments, 5000);
-    return () => clearInterval(interval);
-  }, [user?.id]);
-
-  useEffect(() => {
-    const loadCountdown = async () => {
-      if (window.electronAPI && user?.id) {
-        const cd = await window.electronAPI.getPlanCountdown(user.id);
-        const plan = await window.electronAPI.getUserPlan(user.id);
-        setCountdown(cd);
-        if (cd.expired && plan.plan === 'free') {
-          setShowExpirationModal(true);
-        }
-      }
-    };
-    loadCountdown();
-    const interval = setInterval(loadCountdown, 60000);
     return () => clearInterval(interval);
   }, [user?.id]);
 
@@ -683,30 +834,20 @@ export default function Upgrade() {
 
   const handlePaid = async () => {
     if (!selectedPlan || !selectedPayment) return;
+    setLoading(true);
     
-    const payment = {
-      id: Date.now(),
-      userId: user?.id || 'guest',
-      userName: user?.name || 'User',
-      plan: selectedPlan.id,
-      amount: selectedPlan.price,
-      method: selectedPayment,
-      date: new Date().toISOString(),
-      status: 'pending'
-    };
-
-    if (window.electronAPI) {
-      window.electronAPI.addPendingPayment(payment);
-    } else {
-      const payments = JSON.parse(localStorage.getItem('pendingPayments') || '[]');
-      payments.push(payment);
-      localStorage.setItem('pendingPayments', JSON.stringify(payments));
+    try {
+      await paymentApi.createPaymentRequest(selectedPlan.id, selectedPayment, accessToken);
+      
+      setShowModal(false);
+      setSelectedPlan(null);
+      setSelectedPayment(null);
+      setShowPaymentModal(true);
+    } catch (error) {
+      dispatch(setError(true, t('upgrade.errorCreatingRequest') || 'Error creating payment request'));
+    } finally {
+      setLoading(false);
     }
-
-    dispatch(setSuccess(true, t('upgrade.paymentPending')));
-    setShowModal(false);
-    setSelectedPlan(null);
-    setSelectedPayment(null);
   };
 
   return (
@@ -719,21 +860,21 @@ export default function Upgrade() {
       </Header>
 
       {userPlan === 'free' && (
-        <CountdownBanner $expired={countdown.expired}>
-          <MdTimer />
-          <CountdownText $expired={countdown.expired}>
-            {countdown.expired ? 'Free Trial Expired' : 'Free Trial Ends In:'}
+        <CountdownBanner $expired={false}>
+          <MdAccessTime />
+          <CountdownText $expired={false}>
+            {t('profile.freeTrialEndsIn')}:
           </CountdownText>
           <CountdownValue>
-            {countdown.days}d {countdown.hours}h {countdown.minutes}m
+            {Math.round(usedMinutes)}/{dailyFreeMinutes} {t('profile.minutesRemaining')}
           </CountdownValue>
         </CountdownBanner>
       )}
 
       {userPlan !== 'free' && !countdown.expired && (
         <CountdownBanner $expired={false}>
-          <MdTimer />
-          <CountdownText $expired={false}>Plan Expires In:</CountdownText>
+          <MdAccessTime />
+          <CountdownText $expired={false}>{t('profile.planExpiresIn')}:</CountdownText>
           <CountdownValue>
             {countdown.days}d {countdown.hours}h {countdown.minutes}m
           </CountdownValue>
@@ -746,7 +887,7 @@ export default function Upgrade() {
           const Icon = cfg.Icon;
           return (
             <Card key={cfg.id} $accent={cfg.accent}>
-              {(cfg.id === 'free' || cfg.cta === 'current') && <Badge>{t('upgrade.badgeCurrent')}</Badge>}
+              {cfg.cta === 'current' && <Badge>{t('upgrade.badgeCurrent')}</Badge>}
 
               <PlanIcon $variant={cfg.icon}>
                 <Icon />
@@ -819,19 +960,19 @@ export default function Upgrade() {
             {userPayments.map(payment => (
                 <BillingItem key={payment.id}>
                   <BillingRow>
-                    <BillingPlan>{payment.plan}</BillingPlan>
+                    <BillingPlan>{payment.plan_id}</BillingPlan>
                     <BillingAmount>¥{payment.amount}</BillingAmount>
                   </BillingRow>
                   <BillingRow>
-                    <BillingMethod>{payment.method}</BillingMethod>
-                    <BillingStatus $confirmed={payment.status === 'confirmed'}>
-                      {payment.status === 'confirmed' ? t('upgrade.planStarted') : t('upgrade.pending')}
+                    <BillingMethod>{payment.payment_method}</BillingMethod>
+                    <BillingStatus $confirmed={payment.status === 'approved'}>
+                      {payment.status === 'approved' ? t('upgrade.planStarted') : payment.status === 'rejected' ? 'Rejected' : t('upgrade.pending')}
                     </BillingStatus>
                   </BillingRow>
-                  {payment.status === 'confirmed' && payment.confirmedAt && (
+                  {payment.status === 'approved' && payment.confirmed_at && (
                     <BillingConfirmation>
                       <MdCheckCircle size={14} />
-                      <span>{t('upgrade.confirmedOn')} {new Date(payment.confirmedAt).toLocaleString()}</span>
+                      <span>{t('upgrade.confirmedOn')} {new Date(payment.confirmed_at).toLocaleString()}</span>
                     </BillingConfirmation>
                   )}
                 </BillingItem>
@@ -899,8 +1040,8 @@ export default function Upgrade() {
             )}
 
             {selectedPayment && (
-              <ConfirmBtn onClick={handlePaid}>
-                {t('upgrade.ivePaid')}
+              <ConfirmBtn onClick={handlePaid} disabled={loading}>
+                {loading ? 'Processing...' : t('upgrade.ivePaid')}
               </ConfirmBtn>
             )}
           </ModalContent>
@@ -911,7 +1052,7 @@ export default function Upgrade() {
         <ExpirationModal onClick={handleCloseExpirationModal}>
           <ExpirationContent onClick={e => e.stopPropagation()}>
             <ExpirationIcon>
-              <MdAddAlert />
+              <MdNotifications />
             </ExpirationIcon>
             <ExpirationTitle>1-Day Free Trial Expired</ExpirationTitle>
             <ExpirationText>
@@ -922,6 +1063,27 @@ export default function Upgrade() {
             </ExpirationBtn>
           </ExpirationContent>
         </ExpirationModal>
+      )}
+
+      {showPaymentModal && (
+        <PaymentModal onClick={() => setShowPaymentModal(false)}>
+          <PaymentContent onClick={e => e.stopPropagation()}>
+            <PaymentTitle>{t('upgrade.requestReceived') || 'Request Received!'}</PaymentTitle>
+            <PaymentText>
+              {t('upgrade.sendPaymentProof') || 'Please send your payment proof to our admin WeChat:'}
+            </PaymentText>
+            <AdminQRCodeContainer>
+              <img src={process.env.PUBLIC_URL + '/wechat-qr.png'} alt="WeChat QR Code" />
+            </AdminQRCodeContainer>
+            <WeChatID>WeChat ID: zimzamzum</WeChatID>
+            <PaymentText>
+              {t('upgrade.approvalMessage') || 'Once your payment is approved, we will send you a paid account based on the plan you selected.'}
+            </PaymentText>
+            <PaymentBtn onClick={() => setShowPaymentModal(false)}>
+              {t('upgrade.close') || 'Close'}
+            </PaymentBtn>
+          </PaymentContent>
+        </PaymentModal>
       )}
     </Page>
   );

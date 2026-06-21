@@ -19,6 +19,7 @@ import {
 } from '../utils/educationPlatformIcons';
 import { useI18n } from '../i18n/I18nContext';
 import { getUserStorageKey, STORAGE_KEYS } from '../utils/userStorage';
+import { Link } from 'react-router-dom';
 
 const SHORT_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -74,6 +75,33 @@ const TopBar = styled.div`
   gap: 16px;
   margin-bottom: 22px;
   flex-shrink: 0;
+`;
+
+const HelpLink = styled(Link)`
+  color: #60a5fa;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+
+  &:hover {
+    text-decoration: underline;
+  }
+`;
+
+const HelpButton = styled.button`
+  background: transparent;
+  border: none;
+  color: #60a5fa;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  white-space: nowrap;
+
+  &:hover {
+    text-decoration: underline;
+  }
 `;
 
 const Title = styled.h1`
@@ -659,6 +687,7 @@ export default function Schedule() {
   const [platformOptions, setPlatformOptions] = useState([]);
   const [automations, setAutomations] = useState([]);
   const [modalOpen, setModalOpen] = useState(false);
+  const [helpModalOpen, setHelpModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [showAutomations, setShowAutomations] = useState(false);
 
@@ -892,7 +921,11 @@ export default function Schedule() {
   return (
     <Page>
       <TopBar>
-        <Title>{t('schedule.title')}</Title>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '8px' }}>
+            <Title>{t('schedule.title')}</Title>
+          </div>
+        </div>
         <PrimaryBtn type="button" onClick={openCreate}>
           <MdAdd size={20} /> {t('schedule.createSchedule')}
         </PrimaryBtn>
@@ -905,7 +938,9 @@ export default function Schedule() {
               <MdSchedule />
             </EmptyIcon>
             <EmptyTitle>{t('schedule.title')}</EmptyTitle>
-            <EmptySub>{t('schedule.description')}</EmptySub>
+            <EmptySub>
+              {t('schedule.description')} <HelpButton type="button" onClick={() => setHelpModalOpen(true)}>{t('auth.howToSetSchedule')}</HelpButton>
+            </EmptySub>
             <PrimaryBtn type="button" onClick={openCreate}>
               <MdAdd size={20} /> {t('schedule.createSchedule')}
             </PrimaryBtn>
@@ -1107,6 +1142,24 @@ export default function Schedule() {
                 {editingId ? t('schedule.save') : t('schedule.create')}
               </PrimaryBtn>
             </ModalFooter>
+          </Modal>
+        </Overlay>
+      )}
+
+      {helpModalOpen && (
+        <Overlay onMouseDown={(e) => e.target === e.currentTarget && setHelpModalOpen(false)}>
+          <Modal onMouseDown={(e) => e.stopPropagation()}>
+            <ModalHead>
+              <ModalTitle>{t('auth.howToSetSchedule')}</ModalTitle>
+              <CloseX type="button" onClick={() => setHelpModalOpen(false)}>
+                <MdClose />
+              </CloseX>
+            </ModalHead>
+            <div style={{ fontSize: '14px', color: 'rgba(255,255,255,0.85)', lineHeight: '1.6' }}>
+              <span style={{ color: '#ff4444', fontWeight: 'bold' }}>{t('auth.howToSetScheduleWarning')}</span>
+              <br /><br />
+              {t('auth.howToSetScheduleContent')}
+            </div>
           </Modal>
         </Overlay>
       )}

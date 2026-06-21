@@ -274,7 +274,36 @@
   
   <script>
     let currentFilter = 'all';
-    
+    let refreshInterval = null;
+
+    // Resolve the backend API base URL from the Electron store via IPC,
+    // falling back to the default local dev address.
+    async function getApiBaseUrl() {
+      try {
+        if (window.electronAPI && window.electronAPI.getApiBaseUrl) {
+          const url = await window.electronAPI.getApiBaseUrl();
+          if (url) return url.replace(/\/$/, '');
+        }
+      } catch (_) {}
+      return 'http://localhost:8000';
+    }
+
+    async function apiFetch(path, options = {}) {
+      const base = await getApiBaseUrl();
+      const token = window.electronAPI ? await window.electronAPI.getToken() : null;
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        ...(options.headers || {}),
+      };
+      const response = await fetch(`${base}${path}`, { ...options, headers });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`API ${options.method || 'GET'} ${path} failed (${response.status}): ${text}`);
+      }
+      return response.json();
+    }
+
     async function handleLogin(event) {
       event.preventDefault();
       const password = document.getElementById('password-input').value;
@@ -287,6 +316,8 @@
             document.getElementById('login-screen').style.display = 'none';
             document.getElementById('admin-panel').style.display = 'block';
             loadPayments();
+            // Auto-refresh every 10 seconds
+            refreshInterval = setInterval(loadPayments, 10000);
           } else {
             errorElement.classList.add('show');
             setTimeout(() => errorElement.classList.remove('show'), 3000);
@@ -309,15 +340,20 @@
       loadPayments();
     }
     
-    function loadPayments() {
-      if (window.electronAPI) {
-        window.electronAPI.getPendingPayments().then(payments => {
-          renderPayments(payments || []);
-        }).catch(err => {
-          console.error('Error loading payments:', err);
-        });
-      } else {
-        console.error('electronAPI not available');
+    async function loadPayments() {
+      try {
+        // Use backend API instead of Electron-store
+        const payments = await apiFetch('/apps/payments/admin/payment-requests');
+        renderPayments(payments || []);
+      } catch (err) {
+        console.error('Error loading payments:', err);
+        const list = document.getElementById('payments-list');
+        list.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-icon">⚠️</div>
+            <div class="empty-text">Failed to load payments. Check your connection.</div>
+          </div>
+        `;
       }
     }
     
@@ -328,7 +364,7 @@
       if (currentFilter === 'pending') {
         filteredPayments = payments.filter(p => p.status === 'pending');
       } else if (currentFilter === 'confirmed') {
-        filteredPayments = payments.filter(p => p.status === 'confirmed');
+        filteredPayments = payments.filter(p => p.status === 'approved');
       }
       
       if (filteredPayments.length === 0) {
@@ -342,31 +378,31 @@
       }
       
       list.innerHTML = filteredPayments.map(payment => `
-        <div class="card ${payment.status === 'confirmed' ? 'confirmed' : ''}">
+        <div class="card ${payment.status === 'approved' ? 'confirmed' : ''}">
           <div class="info">
-            <div class="label">User</div>
-            <div class="value">${payment.userName}</div>
+            <div class="label">Name</div>
+            <div class="value" style="font-size:13px;word-break:break-all">${payment.user_name || payment.user_id || 'Unknown'}</div>
           </div>
           <div class="info">
             <div class="label">Plan</div>
-            <div class="value">${payment.plan}</div>
+            <div class="value">${payment.plan_id || payment.plan?.id || 'Unknown'}</div>
           </div>
           <div class="info">
             <div class="label">Amount</div>
-            <div class="value">¥${payment.amount}</div>
+            <div class="value">¥${payment.amount || 0}</div>
           </div>
           <div class="info">
             <div class="label">Method</div>
-            <div class="value">${payment.method}</div>
+            <div class="value">${payment.payment_method || '—'}</div>
           </div>
           <div class="info">
             <div class="label">Date</div>
-            <div class="value">${payment.date ? new Date(payment.date).toLocaleString() : 'Unknown'}</div>
+            <div class="value">${payment.created_at ? new Date(payment.created_at).toLocaleString() : 'Unknown'}</div>
           </div>
           <div class="info">
             <div class="label">Status</div>
-            <div class="status ${payment.status}">
-              ${payment.status === 'confirmed' ? 'Plan Started' : 'Pending'}
+            <div class="status ${payment.status === 'approved' ? 'confirmed' : payment.status}">
+              ${payment.status === 'approved' ? 'Plan Started' : payment.status === 'rejected' ? 'Rejected' : 'Pending'}
             </div>
           </div>
           ${payment.status === 'pending' ? `
@@ -378,15 +414,18 @@
       `).join('');
     }
     
-    function confirmPayment(paymentId) {
-      if (window.electronAPI) {
-        window.electronAPI.confirmPayment(paymentId);
-        setTimeout(loadPayments, 500);
+    async function confirmPayment(paymentId) {
+      try {
+        // Use backend API instead of Electron-store
+        await apiFetch(`/apps/payments/admin/approve-payment/${paymentId}`, {
+          method: 'POST'
+        });
+        await loadPayments();
+      } catch (err) {
+        console.error('Error confirming payment:', err);
+        alert('Failed to confirm payment: ' + err.message);
       }
     }
-    
-    // Auto-refresh every 5 seconds
-    let refreshInterval;
   </script>
 </body>
 </html>

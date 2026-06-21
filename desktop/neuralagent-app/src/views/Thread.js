@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { useSelector, useDispatch } from 'react-redux';
 import axios from '../utils/axios';
 import constants from '../utils/constants';
-import { setLoadingDialog, setError } from '../store';
+import { setLoadingDialog, setError, setUpgradePrompt } from '../store';
 import ChatMessage from '../components/ChatMessage';
 import { FlexSpacer } from '../components/Elements/SmallElements';
 import NATextArea from '../components/Elements/TextAreas';
@@ -26,6 +26,8 @@ import {
   resolvePlatformLogoUrl,
 } from '../utils/educationPlatformIcons';
 import { getUserStorageKey } from '../utils/userStorage';
+import paymentApi from '../utils/paymentApi';
+import { canStartTask } from '../utils/freePlanMinutes';
 
 const ThreadDiv = styled.div`
   flex: 1;
@@ -250,41 +252,75 @@ export default function Thread() {
 
   const dispatch = useDispatch();
 
-  const getThread = useCallback(() => {
-    dispatch(setLoadingDialog(true));
+  const getThread = useCallback((showLoading = true) => {
+    if (showLoading) dispatch(setLoadingDialog(true));
     axios.get(`/threads/${tid}`, {
       headers: { 'Authorization': 'Bearer ' + accessToken }
     }).then(response => {
       setThread(response.data);
-      dispatch(setLoadingDialog(false));
+      if (showLoading) dispatch(setLoadingDialog(false));
     }).catch(error => {
-      dispatch(setLoadingDialog(false));
+      if (showLoading) dispatch(setLoadingDialog(false));
       if (error.response?.status === constants.status.UNAUTHORIZED) {
         window.location.reload();
       }
     });
   }, [tid, accessToken, dispatch]);
 
-  const getThreadMessages = useCallback(() => {
-    dispatch(setLoadingDialog(true));
+  const getThreadMessages = useCallback((showLoading = true) => {
+    if (showLoading) dispatch(setLoadingDialog(true));
     axios.get(`/threads/${tid}/thread_messages`, {
       headers: { 'Authorization': 'Bearer ' + accessToken }
     }).then(response => {
       setMessages(response.data);
-      dispatch(setLoadingDialog(false));
+      if (showLoading) dispatch(setLoadingDialog(false));
     }).catch(error => {
-      dispatch(setLoadingDialog(false));
+      if (showLoading) dispatch(setLoadingDialog(false));
       if (error.response?.status === constants.status.UNAUTHORIZED) {
         window.location.reload();
       }
     });
   }, [tid, accessToken, dispatch]);
 
-  const sendMessage = () => {
-    if (messageText.length === 0 || isSendingMessage || thread.status === 'working') {
+  const sendMessage = async () => {
+    if (messageText.length === 0 || isSendingMessage || !thread || thread.status === 'working') {
       return;
     }
-    
+
+    // Vérifier le plan depuis Supabase (source de vérité pour les plans payants)
+    if (accessToken) {
+      try {
+        const userPlanData = await paymentApi.getUserPlan(accessToken);
+        const planId = userPlanData.plan_id || 'free';
+        
+        // Si le plan vient d'expirer, afficher un message (mais ne pas bloquer)
+        if (userPlanData.plan_just_expired) {
+          dispatch(setError(true, t('profile.planExpired') || 'Your paid plan has expired. You have been moved to the free plan with 10 min/day.'));
+          setTimeout(() => dispatch(setError(false, '')), 8000);
+        }
+        
+        // Pour le free plan, vérifier le quota avec electron-store
+        if (planId === 'free') {
+          if (!(await canStartTask())) {
+            dispatch(setUpgradePrompt(true));
+            return;
+          }
+        }
+      } catch (error) {
+        console.error('Error checking user plan:', error);
+        // En cas d'erreur, on autorise l'action
+      }
+    }
+
+    const userMessage = {
+      id: 'temp-' + Date.now(),
+      thread_chat_from: 'from_user',
+      thread_chat_type: 'normal_message',
+      text: messageText.trim(),
+      created_at: new Date().toISOString(),
+    };
+
+    setMessages(prev => [...prev, userMessage]);
     const data = {text: messageText.trim(), background_mode: backgroundMode, extended_thinking_mode: thinkingMode};
     setMessageText('');
     setSendingMessage(true);
@@ -294,6 +330,7 @@ export default function Thread() {
         'Authorization': 'Bearer ' + accessToken,
       }
     }).then(async (response) => {
+      console.log('[Thread] send_message response:', JSON.stringify(response.data));
       dispatch(setLoadingDialog(false));
       setSendingMessage(false);
       if (response.data.type === 'desktop_task') {
@@ -307,21 +344,24 @@ export default function Thread() {
         setBackgroundMode(backgroundMode || response.data.is_background_mode_requested);
         setThinkingMode(thinkingMode || response.data.is_extended_thinking_mode_requested);
         window.electronAPI.setLastThinkingModeValue((thinkingMode || response.data.is_extended_thinking_mode_requested).toString());
+        
         window.electronAPI.launchAIAgent(
           process.env.REACT_APP_PROTOCOL + '://' + process.env.REACT_APP_DNS,
           tid,
           backgroundMode || response.data.is_background_mode_requested
         );
       }
-      // TODO Remove
       getThread();
       getThreadMessages();
     }).catch((error) => {
       dispatch(setLoadingDialog(false));
       setSendingMessage(false);
-      if (error.response.status === constants.status.BAD_REQUEST) {
+      setMessages(prev => prev.filter(m => m.id !== userMessage.id));
+      if (error.response?.status === constants.status.BAD_REQUEST) {
         if (error.response.data?.message === 'Not_Browser_Task_BG_Mode') {
           dispatch(setError(true, 'Background Mode only supports browser tasks.'));
+        } else if (error.response.data?.message === 'No_More_Daily_Minutes') {
+          dispatch(setUpgradePrompt(true));
         } else {
           dispatch(setError(true, 'Something Wrong Happened, Please try again.'));
         }
@@ -346,7 +386,7 @@ export default function Thread() {
       window.location.reload();
     }).catch((error) => {
       dispatch(setLoadingDialog(false));
-      if (error.response.status === constants.status.UNAUTHORIZED) {
+      if (error.response?.status === constants.status.UNAUTHORIZED) {
         window.location.reload();
       } else {
         dispatch(setError(true, constants.GENERAL_ERROR));
@@ -358,7 +398,7 @@ export default function Thread() {
   }
 
   const cancelRunningTask = () => {
-    if (thread.status !== 'working') {
+    if (!thread || thread.status !== 'working') {
       return;
     }
 
@@ -375,7 +415,7 @@ export default function Thread() {
       getThread();
     }).catch((error) => {
       dispatch(setLoadingDialog(false));
-      if (error.response.status === constants.status.BAD_REQUEST) {
+      if (error.response?.status === constants.status.BAD_REQUEST) {
         dispatch(setError(true, constants.GENERAL_ERROR));
       } else {
         dispatch(setError(true, constants.GENERAL_ERROR));
@@ -421,10 +461,12 @@ export default function Thread() {
 
   useEffect(() => {
     if (window.electronAPI?.onAIAgentExit) {
-      window.electronAPI.onAIAgentExit(() => {
+      const handleAgentExit = () => {
         getThread();
         getThreadMessages();
-      });
+      };
+      
+      window.electronAPI.onAIAgentExit(handleAgentExit);
     }
   }, []);
 
@@ -469,6 +511,18 @@ export default function Thread() {
       }
     }
   }, [user?.id]);
+
+  // Polling for real-time updates when thread is working
+  useEffect(() => {
+    if (!thread || thread.status !== 'working') return;
+
+    const interval = setInterval(() => {
+      getThread(false);
+      getThreadMessages(false);
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [thread?.status, getThread, getThreadMessages]);
 
   const handleInputChange = (e) => {
     const value = e.target.value;

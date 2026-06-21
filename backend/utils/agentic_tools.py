@@ -3,6 +3,7 @@ from langchain_community.document_loaders import UnstructuredPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import WebBaseLoader, YoutubeLoader
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
 from utils.llm_provider import get_llm
 
 
@@ -25,10 +26,20 @@ def fetch_and_summarize_url(url: str) -> str:
 
     full_text = "\n\n".join(doc.page_content for doc in docs)
 
-    prompt = ChatPromptTemplate.from_template("Summarize the following:\n\n{input}")
-    chain = prompt | get_llm_instance()
-
-    result = chain.invoke({"input": full_text})
+    llm = get_llm_instance()
+    
+    # Check if llm is ChatOpenAI (DeepSeek) for proper format
+    if isinstance(llm, ChatOpenAI):
+        messages = [
+            {"role": "system", "content": "You are a helpful summarization assistant."},
+            {"role": "user", "content": f"Summarize the following:\n\n{full_text}"}
+        ]
+        result = llm.invoke(messages)
+    else:
+        prompt = ChatPromptTemplate.from_template("Summarize the following:\n\n{input}")
+        chain = prompt | llm
+        result = chain.invoke({"input": full_text})
+    
     return result.content if hasattr(result, "content") else str(result)
 
 
@@ -51,10 +62,20 @@ def fetch_and_summarize_pdf(file_path: str = None, url: str = None) -> str:
     # Prepare the full text
     full_text = "\n\n".join(doc.page_content for doc in docs)
 
-    prompt = ChatPromptTemplate.from_template("Summarize the following:\n\n{input}")
-    chain = prompt | get_llm_instance()
-
-    result = chain.invoke({"input": full_text})
+    llm = get_llm_instance()
+    
+    # Check if llm is ChatOpenAI (DeepSeek) for proper format
+    if isinstance(llm, ChatOpenAI):
+        messages = [
+            {"role": "system", "content": "You are a helpful summarization assistant."},
+            {"role": "user", "content": f"Summarize the following:\n\n{full_text}"}
+        ]
+        result = llm.invoke(messages)
+    else:
+        prompt = ChatPromptTemplate.from_template("Summarize the following:\n\n{input}")
+        chain = prompt | llm
+        result = chain.invoke({"input": full_text})
+    
     return result.content if hasattr(result, "content") else str(result)
 
 
@@ -71,10 +92,20 @@ def summarize_youtube_video(url: str) -> str:
     # Prepare the full text
     full_text = "\n\n".join(doc.page_content for doc in docs)
 
-    prompt = ChatPromptTemplate.from_template("Summarize the following:\n\n{input}")
-    chain = prompt | get_llm_instance()
-
-    result = chain.invoke({"input": full_text})
+    llm = get_llm_instance()
+    
+    # Check if llm is ChatOpenAI (DeepSeek) for proper format
+    if isinstance(llm, ChatOpenAI):
+        messages = [
+            {"role": "system", "content": "You are a helpful summarization assistant."},
+            {"role": "user", "content": f"Summarize the following:\n\n{full_text}"}
+        ]
+        result = llm.invoke(messages)
+    else:
+        prompt = ChatPromptTemplate.from_template("Summarize the following:\n\n{input}")
+        chain = prompt | llm
+        result = chain.invoke({"input": full_text})
+    
     return result.content if hasattr(result, "content") else str(result)
 
 

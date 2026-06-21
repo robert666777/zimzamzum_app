@@ -8,6 +8,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import axios, { API_KEY_HEADER } from '../utils/axios';
 import { Text } from '../components/Elements/Typography';
 import { FaPhone, FaEye, FaEyeSlash, FaChevronDown } from "react-icons/fa";
+import { useI18n } from '../i18n/I18nContext';
 
 const pulseGlow = keyframes`
   0%, 100% {
@@ -117,6 +118,7 @@ const LogoImage = styled.img`
 const RightSection = styled.div`
   flex: 1;
   padding: 60px 40px;
+  position: relative;
 `;
 
 const InputField = styled.input`
@@ -276,6 +278,31 @@ const TermsText = styled.div`
   }
 `;
 
+const LangToggle = styled.div`
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  display: flex;
+  gap: 10px;
+  margin-bottom: 22px;
+`;
+
+const LangButton = styled.button`
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: ${(props) => (props.active ? 'rgba(0, 150, 255, 0.18)' : 'transparent')};
+  color: ${(props) => (props.active ? '#0096ff' : 'rgba(255, 255, 255, 0.6)')};
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+
+  &:hover {
+    border-color: rgba(0, 150, 255, 0.4);
+    color: #fff;
+  }
+`;
+
 
 function SignUp() {
 
@@ -288,6 +315,7 @@ function SignUp() {
 
   const dispatch = useDispatch();
   const navigate = useNavigate();
+  const { locale, setLocale, t } = useI18n();
   
   const isFormValid = () => {
     return name.length > 0 && phoneNumber.length >= 10 && password.length >= 6 && confirmPassword === password;
@@ -300,7 +328,7 @@ function SignUp() {
   }
 
   const setTitle = () => {
-    document.title = 'Sign Up | ' + constants.APP_NAME;
+    document.title = `${t('auth.signupTitle')} | ${constants.APP_NAME}`;
   }
 
   const signUpUser = () => {
@@ -314,12 +342,13 @@ function SignUp() {
     axios.post('/auth/signup', data, API_KEY_HEADER).then((response) => {
       dispatch(setLoadingDialog(false));
       sessionStorage.setItem(PRODUCT_TOUR_SESSION_KEY, '1');
+      sessionStorage.setItem('signupSuccessMessage', t('auth.freeTrialStarted'));
       window.electronAPI.setToken(response.data.token);
       window.electronAPI.setRefreshToken(response.data.refresh_token);
       window.location.reload();
     }).catch((error) => {
       dispatch(setLoadingDialog(false));
-      if (error.response && error.response.status === constants.status.CONFLICT) {
+      if (error.response?.status === constants.status.CONFLICT) {
         dispatch(setError(true, 'Phone already exists, Please try again.'));
       } else {
         dispatch(setError(true, 'Server connection failed. Please check if the backend server is running.'));
@@ -332,7 +361,7 @@ function SignUp() {
   
   useEffect(() => {
     setTitle();
-  }, []);
+  }, [t]);
 
   return (
     <MainContainer>
@@ -347,28 +376,37 @@ function SignUp() {
           </DotContainer>
           
           <LogoContainer>
-            <LogoImage src="/logo.png" alt="Logo" />
+            <LogoImage src={`${process.env.PUBLIC_URL}/logo.png`} alt="Logo" />
           </LogoContainer>
           
           <Slogan>
-            Never ever miss any<br/>
-            assignments deadlines<br/>
-            with <span>zimzamzum</span>
+            {t('auth.sloganLine1')}<br/>
+            {t('auth.sloganLine2')}<br/>
+            {t('auth.sloganLine3')} <span>zimzamzum</span>
           </Slogan>
         </LeftSection>
         
         <RightSection>
           <HeaderTabs>
-            <Tab active={false} onClick={() => navigate('/login')}>Log In</Tab>
-            <Tab active={true}>Sign Up</Tab>
+            <Tab active={false} onClick={() => navigate('/login')}>{t('auth.loginTitle')}</Tab>
+            <Tab active={true}>{t('auth.signupTitle')}</Tab>
           </HeaderTabs>
           
+          <LangToggle>
+            <LangButton type="button" active={locale === 'en'} onClick={() => setLocale('en')}>
+              {t('profile.langEn')}
+            </LangButton>
+            <LangButton type="button" active={locale === 'zh'} onClick={() => setLocale('zh')}>
+              {t('profile.langZh')}
+            </LangButton>
+          </LangToggle>
+
           <Text fontSize="14px" color="rgba(255,255,255,0.6)" style={{marginBottom: '25px'}}>
-            Create your account to get started.
+            {t('auth.signupSubtitle')}
           </Text>
           
           <InputField 
-            placeholder="Full Name" 
+            placeholder={t('auth.fullNamePlaceholder')} 
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -378,7 +416,7 @@ function SignUp() {
           <PhoneInputContainer>
             <PhonePrefix>+86</PhonePrefix>
             <PhoneInput 
-              placeholder="Phone number" 
+              placeholder={t('auth.phonePlaceholder')} 
               type="tel"
               maxLength={11}
               value={phoneNumber}
@@ -389,7 +427,7 @@ function SignUp() {
           
           <PasswordContainer>
             <InputField 
-              placeholder="Password" 
+              placeholder={t('auth.passwordPlaceholder')} 
               type={showPassword ? 'text' : 'password'}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -401,7 +439,7 @@ function SignUp() {
           </PasswordContainer>
           
           <InputField 
-            placeholder="Confirm Password" 
+            placeholder={t('auth.confirmPasswordPlaceholder')} 
             type={showPassword ? 'text' : 'password'}
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
@@ -409,7 +447,7 @@ function SignUp() {
           />
           
           <InputField 
-            placeholder="Referral Code (optional)" 
+            placeholder={t('auth.referralCodePlaceholder')} 
             type="text"
             value={referralCode}
             onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
@@ -418,20 +456,20 @@ function SignUp() {
           
           {password !== confirmPassword && confirmPassword.length > 0 && (
             <Text fontSize="14px" color="#ff4444" style={{marginBottom: '10px'}}>
-              Passwords do not match
+              {t('auth.passwordsDoNotMatch')}
             </Text>
           )}
           
           <SignUpButton disabled={!isFormValid()} onClick={signUpUser}>
-            Sign Up
+            {t('auth.signupButton')}
           </SignUpButton>
           
           <LinkText>
-            Already have an account? <Link to="/login">Log In</Link>
+            {t('auth.alreadyHaveAccount')} <Link to="/login">{t('auth.loginButton')}</Link>
           </LinkText>
           
           <TermsText>
-            By signing up, you agree to our <a href="https://zimzamzum.site/terms" target="_blank" rel="noopener noreferrer">Terms of Service</a> and <a href="https://zimzamzum.site/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>
+            {t('auth.termsSignupPrefix')} <a href="https://zimzamzum.site/terms" target="_blank" rel="noopener noreferrer">{t('auth.termsOfService')}</a> {t('auth.termsAnd')} <a href="https://zimzamzum.site/privacy" target="_blank" rel="noopener noreferrer">{t('auth.privacyPolicy')}</a>.
           </TermsText>
         </RightSection>
       </LoginCard>

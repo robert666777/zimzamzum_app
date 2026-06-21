@@ -336,10 +336,21 @@ def get_next_step():
     return None
 
 def get_current_subtask():
-    url = os.getenv('NEURALAGENT_API_URL') + '/aiagent/' + os.getenv('NEURALAGENT_THREAD_ID') + '/current_subtask'
+    api_url = os.getenv('NEURALAGENT_API_URL')
+    thread_id = os.getenv('NEURALAGENT_THREAD_ID')
+    access_token = os.getenv('NEURALAGENT_USER_ACCESS_TOKEN')
+    
+    if not api_url or not thread_id or not access_token:
+        print("[❌] Missing environment variables!")
+        print(f"  NEURALAGENT_API_URL: {api_url}")
+        print(f"  NEURALAGENT_THREAD_ID: {thread_id}")
+        print(f"  NEURALAGENT_USER_ACCESS_TOKEN: {access_token}")
+        return None
+    
+    url = api_url + '/aiagent/' + thread_id + '/current_subtask'
     headers = {
         'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + os.getenv('NEURALAGENT_USER_ACCESS_TOKEN'),
+        'Authorization': 'Bearer ' + access_token,
     }
     payload = {
         'current_os': 'MacOS' if platform.system() == 'darwin' else platform.system(),
@@ -350,8 +361,8 @@ def get_current_subtask():
         response = requests.post(url, json=payload, headers=headers)
         if response.status_code in (200, 201, 202):
             return response.json()
-    except:
-        pass
+    except Exception as e:
+        print(f"[❌] Error getting current subtask: {e}")
     return None
 
 async def main_loop():

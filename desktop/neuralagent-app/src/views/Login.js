@@ -7,6 +7,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import axios, { API_KEY_HEADER } from '../utils/axios';
 import { Text } from '../components/Elements/Typography';
 import { FaEye, FaEyeSlash } from "react-icons/fa";
+import { useI18n } from '../i18n/I18nContext';
 
 const pulseGlow = keyframes`
   0%, 100% {
@@ -116,6 +117,7 @@ const LogoImage = styled.img`
 const RightSection = styled.div`
   flex: 1;
   padding: 60px 40px;
+  position: relative;
 `;
 
 const InputField = styled.input`
@@ -202,6 +204,31 @@ const LinkText = styled.div`
   }
 `;
 
+const LangToggle = styled.div`
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  display: flex;
+  gap: 10px;
+  margin-bottom: 22px;
+`;
+
+const LangButton = styled.button`
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: ${(props) => (props.active ? 'rgba(0, 150, 255, 0.18)' : 'transparent')};
+  color: ${(props) => (props.active ? '#0096ff' : 'rgba(255, 255, 255, 0.6)')};
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+
+  &:hover {
+    border-color: rgba(0, 150, 255, 0.4);
+    color: #fff;
+  }
+`;
+
 const HeaderTabs = styled.div`
   display: flex;
   gap: 20px;
@@ -284,6 +311,7 @@ function Login() {
 
   const dispatch = useDispatch();
   const navigate = useNavigate();
+  const { locale, setLocale, t } = useI18n();
   
   const isFormValid = () => {
     return phoneNumber.length >= 10 && password.length > 0;
@@ -296,7 +324,7 @@ function Login() {
   }
 
   const setTitle = () => {
-    document.title = 'Login | ' + constants.APP_NAME;
+    document.title = `${t('auth.loginTitle')} | ${constants.APP_NAME}`;
   }
 
   const loginUser = () => {
@@ -314,9 +342,9 @@ function Login() {
       window.location.reload();
     }).catch((error) => {
       dispatch(setLoadingDialog(false));
-      if (error.response && error.response.status === constants.status.UNAUTHORIZED) {
+      if (error.response?.status === constants.status.UNAUTHORIZED) {
         dispatch(setError(true, 'Incorrect Phone Number or Password, Please try again.'));
-      } else if (error.response && error.response.status === constants.status.CONFLICT) {
+      } else if (error.response?.status === constants.status.CONFLICT) {
         dispatch(setError(true, 'Phone already exists, Please try again.'));
       } else {
         dispatch(setError(true, 'Server connection failed. Please check if the backend server is running.'));
@@ -329,7 +357,7 @@ function Login() {
   
   useEffect(() => {
     setTitle();
-  }, []);
+  }, [t]);
 
   return (
     <MainContainer>
@@ -344,30 +372,39 @@ function Login() {
           </DotContainer>
           
           <LogoContainer>
-            <LogoImage src="/logo.png" alt="Logo" />
+            <LogoImage src={`${process.env.PUBLIC_URL}/logo.png`} alt="Logo" />
           </LogoContainer>
           
           <Slogan>
-            Never ever miss any<br/>
-            assignment deadlines<br/>
-            with <span>zimzamzum</span>
+            {t('auth.sloganLine1')}<br/>
+            {t('auth.sloganLine2')}<br/>
+            {t('auth.sloganLine3')} <span>zimzamzum</span>
           </Slogan>
         </LeftSection>
         
         <RightSection>
           <HeaderTabs>
-            <Tab active={true}>Log In</Tab>
-            <Tab active={false} onClick={() => navigate('/signup')}>Sign Up</Tab>
+            <Tab active={true}>{t('auth.loginTitle')}</Tab>
+            <Tab active={false} onClick={() => navigate('/signup')}>{t('auth.signupTitle')}</Tab>
           </HeaderTabs>
           
+          <LangToggle>
+            <LangButton type="button" active={locale === 'en'} onClick={() => setLocale('en')}>
+              {t('profile.langEn')}
+            </LangButton>
+            <LangButton type="button" active={locale === 'zh'} onClick={() => setLocale('zh')}>
+              {t('profile.langZh')}
+            </LangButton>
+          </LangToggle>
+
           <Text fontSize="14px" color="rgba(255,255,255,0.6)" style={{marginBottom: '25px'}}>
-            Welcome back! Please log in to continue.
+            {t('auth.loginSubtitle')}
           </Text>
           
           <PhoneInputContainer>
             <PhonePrefix>+86</PhonePrefix>
             <PhoneInput 
-              placeholder="Phone number" 
+              placeholder={t('auth.phonePlaceholder')} 
               type="tel"
               maxLength={11}
               value={phoneNumber}
@@ -378,7 +415,7 @@ function Login() {
           
           <PasswordContainer>
             <InputField 
-              placeholder="Password" 
+              placeholder={t('auth.passwordPlaceholder')} 
               type={showPassword ? 'text' : 'password'}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -389,22 +426,16 @@ function Login() {
             </PasswordToggle>
           </PasswordContainer>
           
-          <div style={{textAlign: 'right', marginTop: '-10px', marginBottom: '10px'}}>
-            <Link to="/forgot-password" style={{color: '#0096ff', fontSize: '14px', textDecoration: 'none'}}>
-              Forgot Password?
-            </Link>
-          </div>
-          
           <LoginButton disabled={!isFormValid()} onClick={loginUser}>
-            Log In
+            {t('auth.loginButton')}
           </LoginButton>
           
           <LinkText>
-            Don't have an account? <Link to="/signup">Sign Up</Link>
+            {t('auth.dontHaveAccount')} <Link to="/signup">{t('auth.signupButton')}</Link>
           </LinkText>
           
           <TermsText>
-            By continuing, you agree to our <a href="https://zimzamzum.site/terms" target="_blank" rel="noopener noreferrer">Terms of Service</a> and <a href="https://zimzamzum.site/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>
+            {t('auth.termsLoginPrefix')} <a href="https://zimzamzum.site/terms" target="_blank" rel="noopener noreferrer">{t('auth.termsOfService')}</a> {t('auth.termsAnd')} <a href="https://zimzamzum.site/privacy" target="_blank" rel="noopener noreferrer">{t('auth.privacyPolicy')}</a>.
           </TermsText>
         </RightSection>
       </LoginCard>

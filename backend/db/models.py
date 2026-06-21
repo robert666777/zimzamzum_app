@@ -31,6 +31,7 @@ class User(SQLModel, table=True):
     referred_by_user_id: Optional[str] = Field(default=None, foreign_key='users.id')
     referral_reward_until: Optional[datetime.datetime] = Field(default=None)
     last_referral_reward_count: Optional[int] = Field(default=0)
+    is_admin: bool = Field(default=False)
 
     created_at: Optional[datetime.datetime] = Field(default_factory=datetime.datetime.now)
     updated_at: Optional[datetime.datetime] = Field(default_factory=datetime.datetime.now,
@@ -135,6 +136,7 @@ class ThreadTask(SQLModel, table=True):
     needs_memory_from_previous_tasks: bool = Field(default=False)
     background_mode: bool = Field(default=False)
     extended_thinking_mode: bool = Field(default=False)
+    duration_minutes: Optional[float] = Field(default=0.0)  # Durée de la tâche en minutes
 
     created_at: Optional[datetime.datetime] = Field(default_factory=datetime.datetime.now)
     updated_at: Optional[datetime.datetime] = Field(default_factory=datetime.datetime.now,
@@ -253,3 +255,55 @@ class ThreadMessage(SQLModel, table=True):
     thread: Optional['Thread'] = Relationship(back_populates='thread_messages')
     thread_task: Optional['ThreadTask'] = Relationship(back_populates='thread_task_messages')
     plan_subtask: Optional['PlanSubtask'] = Relationship(back_populates='plan_subtask_messages')
+
+
+# --- Plan & Payment Models ---
+
+class Plan(SQLModel, table=True):
+    __tablename__ = 'plans'
+
+    id: str = Field(primary_key=True)
+    name: str
+    price: int
+    period_days: Optional[int]
+    features: Optional[List[str]] = Field(sa_column=Column(Text, nullable=True))
+    created_at: Optional[datetime.datetime] = Field(default_factory=datetime.datetime.now)
+
+
+class UserPlan(SQLModel, table=True):
+    __tablename__ = 'user_plans'
+
+    id: Optional[int] = Field(primary_key=True, index=True, nullable=False)
+    user_id: str = Field(foreign_key='users.id', index=True)
+    plan_id: str = Field(foreign_key='plans.id')
+    is_trial: bool = Field(default=True)
+    started_at: Optional[datetime.datetime] = Field(default_factory=datetime.datetime.now)
+    expires_at: Optional[datetime.datetime]
+    is_active: bool = Field(default=True)
+    created_at: Optional[datetime.datetime] = Field(default_factory=datetime.datetime.now)
+    updated_at: Optional[datetime.datetime] = Field(default_factory=datetime.datetime.now,
+                                                    sa_column_kwargs={'onupdate': datetime.datetime.now})
+
+
+class PaymentRequestStatus(str, Enum):
+    PENDING = 'pending'
+    APPROVED = 'approved'
+    REJECTED = 'rejected'
+
+
+class PaymentRequest(SQLModel, table=True):
+    __tablename__ = 'payment_requests'
+
+    id: Optional[int] = Field(primary_key=True, index=True, nullable=False)
+    user_id: str = Field(foreign_key='users.id', index=True)
+    user_name: str
+    plan_id: str = Field(foreign_key='plans.id')
+    amount: int
+    payment_method: str
+    status: str = Field(default=PaymentRequestStatus.PENDING, index=True)
+    admin_notes: Optional[str]
+    created_at: Optional[datetime.datetime] = Field(default_factory=datetime.datetime.now)
+    updated_at: Optional[datetime.datetime] = Field(default_factory=datetime.datetime.now,
+                                                    sa_column_kwargs={'onupdate': datetime.datetime.now})
+    confirmed_at: Optional[datetime.datetime]
+    confirmed_by: Optional[str] = Field(foreign_key='users.id', nullable=True)

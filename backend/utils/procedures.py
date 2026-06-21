@@ -4,6 +4,9 @@ from fastapi import HTTPException
 import secrets
 import re
 import json
+import datetime
+
+DAILY_FREE_MINUTES = 10
 
 
 class CustomError(HTTPException):
@@ -50,3 +53,6 @@ def extract_json_array(raw: str):
     if not match:
         raise ValueError("No valid JSON array found in model response.")
     return json.loads(match.group(0))
+
+
+

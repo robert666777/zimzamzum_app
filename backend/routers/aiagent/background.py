@@ -3,12 +3,14 @@ from sqlmodel import Session, select, and_
 from db.database import get_session
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
 import json
+import datetime
 from utils import ai_prompts
 from utils.procedures import CustomError, extract_json
 from dependencies.auth_dependencies import get_current_user_dependency
 from db.models import (User, Thread, ThreadStatus, ThreadTask, ThreadTaskStatus, ThreadMessage,
-                       ThreadChatType, ThreadChatFromChoices, ThreadTaskMemoryEntry)
+                       ThreadChatType, ThreadChatFromChoices, ThreadTaskMemoryEntry, UserPlan)
 from schemas.aiagent import BackgroundNextStepRequest
 from utils.agentic_tools import run_tool_server_side
 from utils import llm_provider
@@ -117,70 +119,108 @@ def next_step(tid: str, next_step_req: BackgroundNextStepRequest, db: Session = 
             'memory_item_text': memory_item.text,
         })
 
-    computer_use_user_message = [
-        {
-            'type': 'text',
-            'text': f'Current Task: {task.task_text}'
-        },
-        {
-            'type': 'text',
-            'text': f'Current URL: {next_step_req.current_url}'
-        },
-        {
-            'type': 'text',
-            'text': f'Current Open Tabs: {json.dumps(next_step_req.current_open_tabs)}'
-        }
-    ]
+    # Build the user message as a single text string for DeepSeek compatibility
+    computer_use_user_message_text = f"""Current Task: {task.task_text}
+
+Current URL: {next_step_req.current_url}
+
+Current Open Tabs: {json.dumps(next_step_req.current_open_tabs)}"""
 
     if len(memory_items_arr) > 0:
-        computer_use_user_message.append({
-            'type': 'text',
-            'text': f'Stored Memory Items: \n {json.dumps(memory_items_arr)}'
-        })
+        computer_use_user_message_text += f"""
+
+Stored Memory Items:
+{json.dumps(memory_items_arr)}"""
     if len(action_history) > 0:
-        computer_use_user_message.append({
-            'type': 'text',
-            'text': f'Previous Actions (Limited to 5, newest first): \n {json.dumps(action_history)}'
-        })
+        computer_use_user_message_text += f"""
+
+Previous Actions (Limited to 5, newest first):
+{json.dumps(action_history)}"""
     if len(previous_tasks_arr) > 0:
-        computer_use_user_message.append({
-            'type': 'text',
-            'text': f'Previous Tasks: \n {json.dumps(previous_tasks_arr)}'
-        })
+        computer_use_user_message_text += f"""
+
+Previous Tasks:
+{json.dumps(previous_tasks_arr)}"""
     
-    computer_use_text_prompt = computer_use_user_message.copy()
+    computer_use_text_prompt = computer_use_user_message_text
     
-    if screenshot_user_message_block:
-        computer_use_user_message.append(screenshot_user_message_block)
+    # Check if llm is ChatOpenAI
+    if isinstance(llm, ChatOpenAI):
+        # Check if it's DeepSeek by looking at base_url
+        llm_base_url = getattr(llm, 'base_url', None)
+        if not llm_base_url and hasattr(llm, '_client'):
+            llm_base_url = str(getattr(llm._client, '_api_url', '')).lower()
+        
+        is_deepseek = llm_base_url and 'deepseek' in str(llm_base_url).lower()
+        
+        if is_deepseek:
+            # DeepSeek - text only, no vision support
+            messages = [
+                {"role": "system", "content": ai_prompts.BG_MODE_BROWSER_AGENT_PROMPT},
+                {"role": "user", "content": computer_use_user_message_text}
+            ]
+            response = llm.invoke(messages)
+        else:
+            # Kimi or other ChatOpenAI models - supports vision
+            if screenshot_user_message_block:
+                computer_use_user_message = [
+                    {
+                        'type': 'text',
+                        'text': computer_use_user_message_text
+                    },
+                    screenshot_user_message_block
+                ]
+            else:
+                computer_use_user_message = computer_use_user_message_text
 
-    prompt = ChatPromptTemplate.from_messages([
-        SystemMessage(content=ai_prompts.BG_MODE_BROWSER_AGENT_PROMPT),
-        HumanMessage(content=computer_use_user_message),
-    ])
+            prompt = ChatPromptTemplate.from_messages([
+            SystemMessage(content=ai_prompts.BG_MODE_BROWSER_AGENT_PROMPT),
+            HumanMessage(content=computer_use_user_message),
+        ])
 
-    chain = prompt | llm
-    response = chain.invoke({})
+        chain = prompt | llm
+        response = chain.invoke({})
 
-    print('Token Usage: ', response.usage_metadata)
+    # Print token usage if available (DeepSeek format)
+    if hasattr(response, 'usage_metadata') and response.usage_metadata:
+        print('Token Usage: ', response.usage_metadata)
+    elif hasattr(response, 'usage') and response.usage:
+        print('Token Usage: ', response.usage)
 
     response_data = None
-    if task.extended_thinking_mode is True:
-        for response_item in response.content:
-            if response_item.get('type') == 'reasoning_content':
-                thinking_message = ThreadMessage(
-                    thread_id=instance.id,
-                    thread_task_id=task.id,
-                    thread_chat_type=ThreadChatType.THINKING,
-                    thread_chat_from=ThreadChatFromChoices.FROM_AI,
-                    chain_of_thought=response_item.get('reasoning_content', {}).get('text'),
-                )
-                db.add(thinking_message)
-                db.commit()
-                db.refresh(thinking_message)
-            elif response_item.get('type') == 'text':
-                response_data = extract_json(response_item.get('text'))
+    
+    # Handle both DeepSeek and Kimi response formats
+    response_content = response.content
+    
+    # DeepSeek returns a string, Kimi returns a list
+    if isinstance(response_content, list):
+        # Kimi format with thinking mode
+        if task.extended_thinking_mode is True:
+            for response_item in response_content:
+                if response_item.get('type') == 'reasoning_content':
+                    thinking_message = ThreadMessage(
+                        thread_id=instance.id,
+                        thread_task_id=task.id,
+                        thread_chat_type=ThreadChatType.THINKING,
+                        thread_chat_from=ThreadChatFromChoices.FROM_AI,
+                        chain_of_thought=response_item.get('reasoning_content', {}).get('text'),
+                    )
+                    db.add(thinking_message)
+                    db.commit()
+                    db.refresh(thinking_message)
+                elif response_item.get('type') == 'text':
+                    response_data = extract_json(response_item.get('text'))
+        else:
+            # Try to find the text content in the list
+            for response_item in response_content:
+                if response_item.get('type') == 'text':
+                    response_data = extract_json(response_item.get('text'))
+                    break
+            if not response_data:
+                response_data = extract_json(str(response_content))
     else:
-        response_data = extract_json(response.content)
+        # DeepSeek format - string response
+        response_data = extract_json(response_content)
 
     ai_message = ThreadMessage(
         thread_id=instance.id,
@@ -213,6 +253,11 @@ def next_step(tid: str, next_step_req: BackgroundNextStepRequest, db: Session = 
 
         if action_type == 'task_completed' and len(actions_arr) == 1:
             task.status = ThreadTaskStatus.COMPLETED
+            
+            # Calculer la durée de la tâche
+            if task.created_at:
+                duration = datetime.datetime.now() - task.created_at
+                task.duration_minutes = duration.total_seconds() / 60
             db.add(task)
             db.commit()
             db.refresh(task)
@@ -235,6 +280,11 @@ def next_step(tid: str, next_step_req: BackgroundNextStepRequest, db: Session = 
 
         elif action_type == 'task_failed':
             task.status = ThreadTaskStatus.FAILED
+            
+            # Calculer la durée de la tâche
+            if task.created_at:
+                duration = datetime.datetime.now() - task.created_at
+                task.duration_minutes = duration.total_seconds() / 60
             db.add(task)
             db.commit()
             db.refresh(task)

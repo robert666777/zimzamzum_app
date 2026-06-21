@@ -7,7 +7,7 @@ from db.models import User
 
 _REFERRAL_ALPHABET = string.ascii_uppercase + string.digits
 _CODE_LEN = 8
-_REFERRALS_PER_REWARD = 7  # 7 referrals = 1 day free
+_REFERRALS_PER_REWARD = 30  # 30 referrals = 1 day free
 
 
 def generate_unique_referral_code(session: Session) -> str:
@@ -29,7 +29,7 @@ def normalize_referral_code(raw: str | None) -> str | None:
 
 
 def add_referral_reward_day(referrer: User, session: Session):
-    """Extend referrer's complimentary access by 1 day when they have 7 referrals."""
+    """Extend referrer's complimentary access by 1 day when they have 30 referrals."""
     # Count how many people this referrer has referred
     referral_count = session.exec(
         select(func.count(User.id)).where(User.referred_by_user_id == referrer.id)

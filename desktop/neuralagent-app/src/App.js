@@ -10,7 +10,8 @@ import LoadingDialog from './components/LoadingDialog';
 import FullLoading from './components/FullLoading';
 import constants from './utils/constants';
 import MessageBar from './components/Elements/MessageBar';
-import { setAppLoading, setUser, setAccessToken, setLoadingDialog } from './store';
+import UpgradePrompt from './components/Elements/UpgradePrompt';
+import { setAppLoading, setUser, setAccessToken, setLoadingDialog, setSuccess, setUpgradePrompt } from './store';
 import RedirectTo from './components/RedirectTo';
 import axios from './utils/axios';
 import { logoutUser, refreshToken } from './utils/helpers';
@@ -28,6 +29,7 @@ import BackgroundTask from './views/BackgroundTask';
 import BackgroundSetup from './views/BackgroundSetup';
 import Automations from './views/Automations';
 import AutomationsNew from './views/AutomationsNew';
+import HelpPage from './views/HelpPage';
 import Upgrade from './views/Upgrade';
 import Referrals from './views/Referrals';
 import Schedule from './views/Schedule';
@@ -88,6 +90,8 @@ function AppRoutes() {
   const errorMessage = useSelector(state => state.errorMessage);
   const isSuccess = useSelector(state => state.isSuccess);
   const successMsg = useSelector(state => state.successMsg);
+  const showUpgradePrompt = useSelector(state => state.showUpgradePrompt);
+  const dispatch = useDispatch();
 
   useEffect(() => {
     if (window.electronAPI?.onNavigateToThread) {
@@ -101,6 +105,9 @@ function AppRoutes() {
     <>
       {isError && <MessageBar message={errorMessage} backgroundColor='var(--danger-color)' />}
       {isSuccess && <MessageBar message={successMsg} backgroundColor='var(--success-color)' />}
+      {!isOverlayRoute && !isBackgroundModeRoutes && showUpgradePrompt && (
+        <UpgradePrompt show={showUpgradePrompt} onClose={() => dispatch(setUpgradePrompt(false))} />
+      )}
 
       {location.pathname === '/admin' ? (
         <AppMainContainer>
@@ -132,6 +139,7 @@ function AppRoutes() {
                 <Route path='/threads/:tid' element={<Thread />} />
                 <Route path='/automations' element={<Automations />} />
                 <Route path='/automations-page' element={<AutomationsNew />} />
+                <Route path='/help/:topic' element={<HelpPage />} />
                 <Route path='/upgrade' element={<Upgrade />} />
                 <Route path='/referrals' element={<Referrals />} />
                 <Route path='/schedule' element={<Schedule />} />
@@ -196,6 +204,8 @@ function App() {
     asyncTask();
   }, []);
 
+  // Removed signup success toast to avoid confusion with free trial messaging
+
   const getUserInfo = (accessToken) => {
     dispatch(setAppLoading(true));
     axios.get('/auth/user_info', {
@@ -206,7 +216,7 @@ function App() {
       dispatch(setUser(response.data));
       dispatch(setAppLoading(false));
     }).catch((error) => {
-      if (error.response && error.response.status === constants.status.UNAUTHORIZED) {
+      if (error.response?.status === constants.status.UNAUTHORIZED) {
         refreshToken();
       } else {
         dispatch(setAppLoading(false));

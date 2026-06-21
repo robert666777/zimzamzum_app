@@ -1,275 +1,287 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import styled from 'styled-components';
-import { MdContentCopy, MdPeople, MdSchedule, MdShare } from 'react-icons/md';
-import { Text } from '../components/Elements/Typography';
-import { Button } from '../components/Elements/Button';
-import axios from '../utils/axios';
-import { useSelector, useDispatch } from 'react-redux';
-import { setSuccess } from '../store';
-import constants from '../utils/constants';
+import { MdContentCopy, MdCheck } from 'react-icons/md';
+import { useSelector } from 'react-redux';
 import { useI18n } from '../i18n/I18nContext';
+import axios from '../utils/axios';
 
 const Page = styled.div`
   flex: 1;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  padding: 16px 18px 32px;
-  overflow-y: auto;
+  padding: 16px 18px 24px;
   background: #1a1a1a;
   color: #fff;
-  font-family: 'Poppins', 'Segoe UI', sans-serif;
+  overflow-y: auto;
 `;
 
 const Header = styled.div`
   margin-bottom: 20px;
-  max-width: 720px;
 `;
 
-const Title = styled(Text)`
+const Title = styled.h1`
   font-size: 24px;
   font-weight: 700;
   color: #fff;
   margin-bottom: 8px;
+  margin-top: 0;
 `;
 
-const Sub = styled(Text)`
+const Description = styled.p`
   font-size: 14px;
   color: rgba(255, 255, 255, 0.78);
-  line-height: 1.55;
+  line-height: 1.5;
+  max-width: 720px;
+  margin: 0;
 `;
 
 const StatsRow = styled.div`
   display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
+  gap: 16px;
   margin-bottom: 20px;
 `;
 
 const StatCard = styled.div`
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 16px 20px;
   flex: 1;
-  min-width: 140px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 12px;
-  padding: 14px 16px;
+  min-width: 200px;
 `;
 
 const StatValue = styled.div`
-  font-size: 28px;
+  font-size: 32px;
   font-weight: 700;
   color: #fff;
-  letter-spacing: -0.02em;
+  margin-bottom: 4px;
 `;
 
 const StatLabel = styled.div`
   font-size: 12px;
   color: rgba(255, 255, 255, 0.5);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-top: 4px;
+  letter-spacing: 0.04em;
 `;
 
-const CodeBox = styled.div`
+const ShareSection = styled.div`
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 16px 20px;
+  margin-bottom: 16px;
+`;
+
+const ShareLabel = styled.div`
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-bottom: 10px;
+`;
+
+const ShareCodeRow = styled.div`
   display: flex;
   align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  background: rgba(0, 0, 0, 0.25);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 10px;
-  padding: 12px 14px;
+  gap: 12px;
   margin-bottom: 12px;
 `;
 
-const CodeText = styled.code`
-  font-size: 18px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  color: #e9d5ff;
-  font-family: ui-monospace, 'Consolas', monospace;
-`;
-
-const LinkText = styled.div`
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.65);
-  word-break: break-all;
-  line-height: 1.4;
-`;
-
-const CopyBtn = styled(Button)`
-  padding: 8px 14px;
-  font-size: 13px;
+const ShareCode = styled.div`
+  flex: 1;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
-  background: var(--accent-blue);
+  padding: 10px 14px;
+  font-size: 18px;
+  font-weight: 700;
+  font-family: 'SF Mono', 'Fira Code', monospace;
   color: #fff;
-  border: none;
-  display: inline-flex;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+`;
+
+const CopyButton = styled.button`
+  display: flex;
   align-items: center;
   gap: 6px;
+  background: ${({ $active }) => $active ? '#16a34a' : 'var(--accent-blue, #3b82f6)'};
+  border: none;
+  border-radius: 8px;
+  padding: 10px 18px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s ease;
+  white-space: nowrap;
 
   &:hover {
-    background: var(--accent-blue-hover);
-    opacity: 1;
+    background: ${({ $active }) => $active ? '#15803d' : '#2563eb'};
   }
 `;
 
-const Section = styled.div`
-  margin-top: 22px;
+const InfoText = styled.div`
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.6);
+  line-height: 1.5;
+  margin-bottom: 20px;
 `;
 
-const SectionTitle = styled.div`
-  font-size: 15px;
-  font-weight: 600;
-  margin-bottom: 10px;
-  color: rgba(255, 255, 255, 0.92);
+const EmptyState = styled.div`
+  text-align: center;
+  padding: 32px 16px;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 14px;
 `;
 
-const List = styled.ul`
-  list-style: none;
-  margin: 0;
-  padding: 0;
-`;
-
-const ListItem = styled.li`
+const ReferredList = styled.div`
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 8px;
+`;
+
+const ReferredItem = styled.div`
+  display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: 8px;
+  justify-content: space-between;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  margin-bottom: 8px;
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.85);
+  border-radius: 8px;
+  padding: 12px 16px;
 `;
 
-const POLL_MS = 5000;
+const ReferredName = styled.div`
+  font-size: 14px;
+  color: #fff;
+  font-weight: 500;
+`;
+
+const ReferredDate = styled.div`
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.45);
+`;
 
 export default function Referrals() {
   const { t } = useI18n();
-  const accessToken = useSelector((s) => s.accessToken);
-  const userId = useSelector((s) => s.userId);
-  const dispatch = useDispatch();
   const [summary, setSummary] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [copied, setCopied] = useState(false);
+  const accessToken = useSelector((state) => state.accessToken) || window.localStorage.getItem('access_token');
 
-  const fetchSummary = useCallback(async () => {
-    if (!accessToken) return;
+  useEffect(() => {
+    fetchReferralData();
+  }, []);
+
+  const fetchReferralData = async () => {
     try {
-      const { data } = await axios.get('/referrals/summary', {
-        headers: { Authorization: 'Bearer ' + accessToken },
-      });
-      setSummary(data);
-      
-      // Appliquer les nouveaux jours de récompense si disponibles
-      if (data.new_reward_days && data.new_reward_days > 0) {
-        try {
-          await window.electronAPI.extendPlanByDays(userId, data.new_reward_days);
-          dispatch(setSuccess(true, `${data.new_reward_days} day(s) added to your plan!`));
-          setTimeout(() => dispatch(setSuccess(false, '')), 2500);
-        } catch (e) {
-          console.error('Failed to extend plan:', e);
+      const response = await axios.get('/referrals/summary', {
+        headers: {
+          Authorization: 'Bearer ' + accessToken
         }
-      }
-    } catch (e) {
-      console.error(e);
+      });
+      setSummary(response.data);
+    } catch (err) {
+      console.warn('API error:', err.message);
+      setSummary({
+        referral_code: '',
+        referral_count: 0,
+        share_url: '',
+        referred: [],
+        new_reward_days: 0
+      });
+    } finally {
+      setLoading(false);
     }
-  }, [accessToken, userId, dispatch]);
+  };
 
-  useEffect(() => {
-    fetchSummary();
-  }, [fetchSummary]);
-
-  useEffect(() => {
-    const id = setInterval(fetchSummary, POLL_MS);
-    return () => clearInterval(id);
-  }, [fetchSummary]);
-
-  const copy = (text, msg) => {
-    if (!text) return;
+  const copyToClipboard = (text) => {
     navigator.clipboard.writeText(text).then(() => {
-      dispatch(setSuccess(true, msg));
-      setTimeout(() => dispatch(setSuccess(false, '')), 2500);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     });
   };
 
-  const rewardDays =
-    summary?.referral_count != null ? Math.floor(Number(summary.referral_count) / 7) : 0;
+  const formatDate = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  };
+
+  if (loading) {
+    return (
+      <Page>
+        <Header>
+          <Title>{t('referrals.title')}</Title>
+          <Description>{t('referrals.description')}</Description>
+        </Header>
+        <EmptyState>Loading...</EmptyState>
+      </Page>
+    );
+  }
+
+  if (!summary) {
+    return (
+      <Page>
+        <Header>
+          <Title>{t('referrals.title')}</Title>
+          <Description>{t('referrals.description')}</Description>
+        </Header>
+        <EmptyState>{t('referrals.youGetDays')}</EmptyState>
+      </Page>
+    );
+  }
 
   return (
     <Page>
       <Header>
         <Title>{t('referrals.title')}</Title>
-        <Sub>{t('referrals.description')}</Sub>
+        <Description>{t('referrals.description')}</Description>
       </Header>
 
       <StatsRow>
         <StatCard>
-          <StatValue>{summary?.referral_count ?? '—'}</StatValue>
-          <StatLabel>
-            <MdPeople style={{ verticalAlign: 'middle', marginRight: 4 }} />
-            {t('referrals.successfulReferrals')}
-          </StatLabel>
-        </StatCard>
-        <StatCard>
-          <StatValue>{rewardDays}</StatValue>
-          <StatLabel>
-            <MdSchedule style={{ verticalAlign: 'middle', marginRight: 4 }} />
-            {t('referrals.complimentaryDays')}
-          </StatLabel>
+          <StatValue>{summary.referral_count}</StatValue>
+          <StatLabel>{t('referrals.successfulReferrals')}</StatLabel>
         </StatCard>
       </StatsRow>
 
-      {summary?.referral_reward_until && (
-        <Sub style={{ marginBottom: 16 }}>
-          {t('referrals.referralAccess')}{' '}
-          <strong style={{ color: '#fff' }}>
-            {new Date(summary.referral_reward_until).toLocaleString()}
-          </strong>
-        </Sub>
+      <ShareSection>
+        <ShareLabel>{t('referrals.shareCode')}</ShareLabel>
+        <ShareCodeRow>
+          <ShareCode>
+            <MdContentCopy style={{ fontSize: '18px', color: 'rgba(255,255,255,0.4)' }} />
+            {summary.referral_code}
+          </ShareCode>
+          <CopyButton $active={copied} onClick={() => copyToClipboard(summary.referral_code)}>
+            {copied ? <MdCheck size={16} /> : <MdContentCopy size={16} />}
+            {copied ? 'Copied!' : t('referrals.copyCode')}
+          </CopyButton>
+        </ShareCodeRow>
+      </ShareSection>
+
+      <InfoText>
+        {t('referrals.shareCodeInfo')}
+      </InfoText>
+
+      {summary.referred.length === 0 ? (
+        <EmptyState>{t('referrals.youGetDays')}</EmptyState>
+      ) : (
+        <ReferredList>
+          {summary.referred.map((r) => (
+            <ReferredItem key={r.id}>
+              <ReferredName>{r.name_masked}</ReferredName>
+              <ReferredDate>{formatDate(r.joined_at)}</ReferredDate>
+            </ReferredItem>
+          ))}
+        </ReferredList>
       )}
-
-      <Section>
-        <SectionTitle>
-          <MdShare style={{ verticalAlign: 'middle', marginRight: 6 }} />
-          {t('referrals.shareCode')}
-        </SectionTitle>
-        <CodeBox>
-          <CodeText>{summary?.referral_code || 'Loading…'}</CodeText>
-        </CodeBox>
-        <CopyBtn
-          type="button"
-          onClick={() =>
-            copy(summary?.referral_code, 'Referral code copied.')
-          }
-        >
-          <MdContentCopy /> {t('referrals.copyCode')}
-        </CopyBtn>
-        <Sub style={{ marginTop: 12, fontSize: 12 }}>
-          Share this code with friends. When they sign up using this code, both of you get rewards!
-        </Sub>
-      </Section>
-
-      <Section>
-        <SectionTitle>{t('referrals.friendSignsUp')}</SectionTitle>
-        {!summary?.referred?.length ? (
-          <Sub>{t('referrals.youGetDays')}</Sub>
-        ) : (
-          <List>
-            {summary.referred.map((r) => (
-              <ListItem key={r.id}>
-                <span>{r.name_masked}</span>
-                <span style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12 }}>
-                  {r.joined_at
-                    ? new Date(r.joined_at).toLocaleDateString()
-                    : ''}
-                </span>
-              </ListItem>
-            ))}
-          </List>
-        )}
-      </Section>
     </Page>
   );
 }

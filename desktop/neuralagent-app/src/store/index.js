@@ -58,6 +58,13 @@ export function setThreads(threads) {
   };
 }
 
+export function setUpgradePrompt(showUpgradePrompt) {
+  return {
+    type: 'SET_UPGRADE_PROMPT',
+    showUpgradePrompt: showUpgradePrompt,
+  };
+}
+
 const defaultState = {
   isAppLoading: true,
   isFullLoading: false,
@@ -69,6 +76,7 @@ const defaultState = {
   isSuccess: false,
   successMsg: '',
   threads: [],
+  showUpgradePrompt: false,
 }
 
 function reducer(state=defaultState, action) {
@@ -103,6 +111,9 @@ function reducer(state=defaultState, action) {
       return newState;
     case 'SET_THREADS':
       newState.threads = action.threads;
+      return newState;
+    case 'SET_UPGRADE_PROMPT':
+      newState.showUpgradePrompt = action.showUpgradePrompt;
       return newState;
     default:
       break;

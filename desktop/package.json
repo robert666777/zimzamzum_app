@@ -23,6 +23,13 @@
   "build": {
     "appId": "com.getneuralagent.desktop",
     "productName": "ZimZamZum",
+    "afterSign": null,
+    "publish": {
+      "provider": "github",
+      "repo": "zimzamzum_app",
+      "owner": "robert666777",
+      "releaseType": "release"
+    },
     "directories": {
       "buildResources": "assets",
       "output": "dist"
@@ -30,17 +37,13 @@
     "files": [
       "main.js",
       "electron/**/*",
-      "neuralagent-app/build/**/*"
+      "neuralagent-app/build/**/*",
+      "admin.html",
+      "assets/**/*",
+      "agent_build/**/*"
     ],
-    "extraResources": [
-      {
-        "from": "agent_build/agent.exe",
-        "to": "agent.exe"
-      },
-      {
-        "from": "agent_build/suggestor.exe",
-        "to": "suggestor.exe"
-      }
+    "asarUnpack": [
+      "agent_build/**/*"
     ],
     "mac": {
       "target": [
@@ -49,20 +52,33 @@
           "arch": "arm64"
         }
       ],
-      "category": "public.app-category.productivity"
+      "category": "public.app-category.productivity",
+      "icon": "assets/icon.png"
     },
     "win": {
-      "target": "nsis"
+      "target": {
+        "target": "nsis",
+        "arch": [
+          "x64"
+        ]
+      },
+      "icon": "assets/icon.ico"
     },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false,
+      "displayLanguageSelector": false,
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "installerHeaderIcon": "assets/icon.ico"
     },
     "linux": {
-      "target": "AppImage"
+      "target": "AppImage",
+      "icon": "assets/icon.png"
     }
   },
   "devDependencies": {
@@ -74,6 +90,7 @@
   "dependencies": {
     "electron-is-dev": "^3.0.1",
     "electron-store": "^10.0.1",
+    "electron-updater": "^6.8.9",
     "express": "^5.1.0",
     "sudo-prompt": "^9.2.1",
     "tree-kill": "^1.2.2",

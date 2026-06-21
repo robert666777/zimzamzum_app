@@ -10,7 +10,7 @@ import {
   MdDelete,
 } from 'react-icons/md';
 import { useSelector } from 'react-redux';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import axios from '../utils/axios';
 import {
   EDUCATION_PLATFORM_ICON_URL,
@@ -19,6 +19,31 @@ import {
 } from '../utils/educationPlatformIcons';
 import { useI18n } from '../i18n/I18nContext';
 import { getUserStorageKey } from '../utils/userStorage';
+
+const HelpLink = styled(Link)`
+  color: #60a5fa;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+`;
+
+const HelpButton = styled.button`
+  background: transparent;
+  border: none;
+  color: #60a5fa;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+
+  &:hover {
+    text-decoration: underline;
+  }
+`;
 
 const defaultAutomations = [
   {
@@ -102,11 +127,18 @@ const Header = styled.div`
   margin-bottom: 22px;
 `;
 
+const TitleRow = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 8px;
+`;
+
 const Title = styled.h1`
   font-size: 28px;
   font-weight: 700;
   letter-spacing: -0.02em;
-  margin: 0 0 8px;
+  margin: 0;
   color: #fff;
 `;
 
@@ -587,6 +619,7 @@ export default function AutomationsNew() {
   const [searchTerm, setSearchTerm] = useState('');
   const [platformOptions, setPlatformOptions] = useState([]);
   const [modalOpen, setModalOpen] = useState(false);
+  const [helpModalOpen, setHelpModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
 
   const [name, setName] = useState('');
@@ -767,8 +800,12 @@ ${auto.taskDescription || 'None'}`;
   return (
     <Page>
       <Header>
-        <Title>{t('automations.title')}</Title>
-        <Description>{t('automations.description')}</Description>
+        <TitleRow>
+          <Title>{t('automations.title')}</Title>
+        </TitleRow>
+        <Description>
+          {t('automations.description')} <HelpButton type="button" onClick={() => setHelpModalOpen(true)}>{t('auth.howToSetAutomation')}</HelpButton>
+        </Description>
       </Header>
 
       <SearchBar>
@@ -940,6 +977,22 @@ ${auto.taskDescription || 'None'}`;
                 </SaveButton>
               </ModalFooter>
             </Form>
+          </Modal>
+        </Overlay>
+      )}
+
+      {helpModalOpen && (
+        <Overlay onMouseDown={(e) => e.target === e.currentTarget && setHelpModalOpen(false)}>
+          <Modal onMouseDown={(e) => e.stopPropagation()}>
+            <ModalHeader>
+              <ModalTitle>{t('auth.howToSetAutomation')}</ModalTitle>
+              <CloseButton type="button" onClick={() => setHelpModalOpen(false)}>
+                <MdClose />
+              </CloseButton>
+            </ModalHeader>
+            <div style={{ fontSize: '14px', color: 'rgba(255,255,255,0.85)', lineHeight: '1.6' }}>
+              {t('auth.howToSetAutomationContent')}
+            </div>
           </Modal>
         </Overlay>
       )}

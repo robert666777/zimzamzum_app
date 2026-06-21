@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, status
+from pydantic import BaseModel
 from sqlmodel import Session, select
 from db.models import User, UserType, LoginSession, PhoneVerificationEntry
 from schemas.auth import UserInfo, UserCreate, UserAuth, Logout, RefreshToken, LoginWithGoogle, PhoneLogin, PhoneSignup, SendSmsCode
@@ -391,10 +392,9 @@ def signup_with_sms(phone_signup: PhoneSignup, db: Session = Depends(get_session
     ).first()
 
     if not entry:
-        raise CustomError(status.HTTP_401_UNAUTHORIZED, 'Invalid or expired verification code')
+        raise CustomError(status.HTTP_400_BAD_REQUEST, 'Invalid or expired verification code')
 
     entry.is_used = True
-    db.add(entry)
     db.commit()
 
     existing_user = db.exec(select(User).where(User.phone_number == phone_number)).first()
@@ -439,3 +439,14 @@ def signup_with_sms(phone_signup: PhoneSignup, db: Session = Depends(get_session
         'refresh_token': refresh_token,
         'user': user_data,
     }
+
+
+class AdminPasswordRequest(BaseModel):
+    password: str
+
+
+@router.post('/verify-admin')
+def verify_admin(request: AdminPasswordRequest):
+    """Verify admin password against the environment variable."""
+    admin_password = os.getenv('ADMIN_PASSWORD')
+    return {'valid': request.password == admin_password}

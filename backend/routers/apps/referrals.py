@@ -44,7 +44,7 @@ def referral_summary(
     referral_count = len(referred_rows)
     
     # Calculer les nouveaux jours de récompense
-    REFERRALS_PER_REWARD = 7
+    REFERRALS_PER_REWARD = 30
     last_count = user.last_referral_reward_count or 0
     new_reward_days = (referral_count // REFERRALS_PER_REWARD) - (last_count // REFERRALS_PER_REWARD)
     

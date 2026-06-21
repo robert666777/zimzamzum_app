@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import styled from 'styled-components';
-import { MdCheck, MdClose } from 'react-icons/md';
+import { MdCheck, MdClose, MdAccessTime, MdPerson, MdBusiness, MdPayment, MdEvent, MdCheckCircle } from 'react-icons/md';
 import { Text } from '../components/Elements/Typography';
 import { Button } from '../components/Elements/Button';
-import { useDispatch } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
 import { setSuccess, setError } from '../store';
 import { useI18n } from '../i18n/I18nContext';
+import paymentApi from '../utils/paymentApi';
 
 const Page = styled.div`
   flex: 1;
@@ -41,6 +42,29 @@ const Subtitle = styled(Text)`
   margin: 0 auto;
 `;
 
+const FilterTabs = styled.div`
+  max-width: 1120px;
+  margin: 0 auto 20px;
+  display: flex;
+  gap: 8px;
+`;
+
+const FilterTab = styled.button`
+  padding: 10px 20px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: ${p => p.$active ? 'rgba(59, 130, 246, 0.3)' : 'rgba(255, 255, 255, 0.05)'};
+  color: ${p => p.$active ? '#3b82f6' : 'rgba(255, 255, 255, 0.7)'};
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+`;
+
 const List = styled.div`
   max-width: 1120px;
   margin: 0 auto;
@@ -56,14 +80,28 @@ const Card = styled.article`
   border-radius: 14px;
   padding: 20px;
   display: flex;
+  flex-direction: column;
+  gap: 16px;
+`;
+
+const CardHeader = styled.div`
+  display: flex;
   align-items: center;
-  gap: 20px;
+  justify-content: space-between;
   flex-wrap: wrap;
+  gap: 12px;
+`;
+
+const CardBody = styled.div`
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
 `;
 
 const Info = styled.div`
-  flex: 1;
-  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 `;
 
 const Label = styled(Text)`
@@ -71,7 +109,6 @@ const Label = styled(Text)`
   color: rgba(255, 255, 255, 0.55);
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  margin-bottom: 4px;
 `;
 
 const Value = styled(Text)`
@@ -80,16 +117,76 @@ const Value = styled(Text)`
   font-weight: 600;
 `;
 
+const StatusBadge = styled.span`
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  ${p => p.$status === 'pending' && `
+    background: rgba(251, 191, 36, 0.2);
+    color: #fbbf24;
+  `}
+  ${p => p.$status === 'approved' && `
+    background: rgba(74, 222, 128, 0.2);
+    color: #4ade80;
+  `}
+  ${p => p.$status === 'rejected' && `
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+  `}
+`;
+
+const Actions = styled.div`
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+`;
+
 const ConfirmBtn = styled(Button)`
   background: #4ade80;
   color: #000;
   border: none;
-  padding: 12px 24px;
-  border-radius: 10px;
+  padding: 10px 20px;
+  border-radius: 8px;
   font-weight: 600;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 
   &:hover {
     background: #22c55e;
+  }
+
+  &:disabled {
+    background: rgba(74, 222, 128, 0.5);
+    cursor: not-allowed;
+  }
+`;
+
+const RejectBtn = styled(Button)`
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  &:hover {
+    background: rgba(239, 68, 68, 0.3);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 `;
 
@@ -105,86 +202,222 @@ const EmptyIcon = styled.div`
   margin-bottom: 20px;
 `;
 
+const ConfirmationInfo = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(74, 222, 128, 0.1);
+  border-radius: 8px;
+  margin-top: 8px;
+`;
+
+const PlanInfo = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+`;
+
 export default function Admin() {
   const dispatch = useDispatch();
   const { t } = useI18n();
+  const accessToken = useSelector(state => state.accessToken);
   const [payments, setPayments] = useState([]);
+  const [filter, setFilter] = useState('all');
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    if (!accessToken) return;
+    
     const loadPayments = async () => {
-      let saved = [];
-      if (window.electronAPI) {
-        saved = await window.electronAPI.getPendingPayments();
-      } else {
-        saved = JSON.parse(localStorage.getItem('pendingPayments') || '[]');
+      try {
+        const data = await paymentApi.getAllPaymentRequests(accessToken);
+        setPayments(data);
+      } catch (error) {
+        console.error('Error loading payments:', error);
+        if (error.response?.status === 403) {
+          dispatch(setError(true, 'You are not authorized to access the admin panel'));
+        }
       }
-      setPayments(saved);
     };
     loadPayments();
-  }, []);
+    const interval = setInterval(loadPayments, 5000);
+    return () => clearInterval(interval);
+  }, [dispatch, accessToken]);
 
-  const handleConfirm = (paymentId) => {
-    const updated = payments.map(p => 
-      p.id === paymentId ? { ...p, status: 'confirmed' } : p
-    );
-    setPayments(updated);
-    
-    if (window.electronAPI) {
-      window.electronAPI.confirmPayment(paymentId);
-    } else {
-      localStorage.setItem('pendingPayments', JSON.stringify(updated));
+  const handleConfirm = async (paymentId) => {
+    setLoading(true);
+    try {
+      await paymentApi.approvePayment(paymentId, accessToken);
+      setPayments(prev => prev.map(p => 
+        p.id === paymentId ? { ...p, status: 'approved' } : p
+      ));
+      dispatch(setSuccess(true, t('admin.paymentConfirmed') || 'Payment confirmed successfully'));
+    } catch (error) {
+      dispatch(setError(true, t('admin.errorConfirming') || 'Error confirming payment'));
+    } finally {
+      setLoading(false);
     }
-    
-    dispatch(setSuccess(true, t('admin.paymentConfirmed')));
   };
 
-  const pendingPayments = payments.filter(p => p.status === 'pending');
+  const handleReject = async (paymentId) => {
+    setLoading(true);
+    try {
+      await paymentApi.rejectPayment(paymentId, 'Payment rejected by admin', accessToken);
+      setPayments(prev => prev.map(p => 
+        p.id === paymentId ? { ...p, status: 'rejected' } : p
+      ));
+      dispatch(setSuccess(true, 'Payment rejected successfully'));
+    } catch (error) {
+      dispatch(setError(true, 'Error rejecting payment'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const filteredPayments = payments.filter(p => {
+    if (filter === 'all') return true;
+    return p.status === filter;
+  });
+
+  const getStatusText = (status) => {
+    switch (status) {
+      case 'pending': return 'Pending';
+      case 'approved': return 'Approved';
+      case 'rejected': return 'Rejected';
+      default: return status;
+    }
+  };
+
+  const getStatusIcon = (status) => {
+    switch (status) {
+      case 'pending': return <MdAccessTime size={14} />;
+      case 'approved': return <MdCheckCircle size={14} />;
+      case 'rejected': return <MdClose size={14} />;
+      default: return null;
+    }
+  };
 
   return (
-    <>
+    <Page>
       <Header>
-        <Title>{t('admin.title')}</Title>
+        <Title>{t('admin.title') || 'Admin Panel'}</Title>
+        <Subtitle>
+          {t('admin.subtitle') || 'Manage payment requests and user upgrades'}
+        </Subtitle>
       </Header>
 
-      {pendingPayments.length === 0 ? (
+      <FilterTabs>
+        <FilterTab 
+          $active={filter === 'all'} 
+          onClick={() => setFilter('all')}
+        >
+          All ({payments.length})
+        </FilterTab>
+        <FilterTab 
+          $active={filter === 'pending'} 
+          onClick={() => setFilter('pending')}
+        >
+          Pending ({payments.filter(p => p.status === 'pending').length})
+        </FilterTab>
+        <FilterTab 
+          $active={filter === 'approved'} 
+          onClick={() => setFilter('approved')}
+        >
+          Approved ({payments.filter(p => p.status === 'approved').length})
+        </FilterTab>
+        <FilterTab 
+          $active={filter === 'rejected'} 
+          onClick={() => setFilter('rejected')}
+        >
+          Rejected ({payments.filter(p => p.status === 'rejected').length})
+        </FilterTab>
+      </FilterTabs>
+
+      {filteredPayments.length === 0 ? (
         <EmptyState>
           <EmptyIcon>📭</EmptyIcon>
           <Text style={{ color: 'rgba(255,255,255,0.6)' }}>
-            {t('admin.noPendingPayments')}
+            {t('admin.noPendingPayments') || 'No payment requests found'}
           </Text>
         </EmptyState>
       ) : (
         <List>
-          {pendingPayments.map(payment => (
+          {filteredPayments.map(payment => (
             <Card key={payment.id}>
-              <Info>
-                <Label>{t('admin.user')}</Label>
-                <Value>{payment.userName}</Value>
-              </Info>
-              <Info>
-                <Label>{t('admin.plan')}</Label>
-                <Value>{payment.plan}</Value>
-              </Info>
-              <Info>
-                <Label>{t('admin.amount')}</Label>
-                <Value>¥{payment.amount}</Value>
-              </Info>
-              <Info>
-                <Label>{t('admin.method')}</Label>
-                <Value>{payment.method}</Value>
-              </Info>
-              <Info>
-                <Label>{t('admin.date')}</Label>
-                <Value>{new Date(payment.date).toLocaleString()}</Value>
-              </Info>
-              <ConfirmBtn onClick={() => handleConfirm(payment.id)}>
-                <MdCheck style={{ marginRight: '8px' }} />
-                {t('admin.confirmPayment')}
-              </ConfirmBtn>
+              <CardHeader>
+                <PlanInfo>
+                  <MdBusiness size={18} style={{ color: '#3b82f6' }} />
+                  <Value>{payment.plan?.name || payment.plan_id}</Value>
+                </PlanInfo>
+                <StatusBadge $status={payment.status}>
+                  {getStatusIcon(payment.status)}
+                  {getStatusText(payment.status)}
+                </StatusBadge>
+              </CardHeader>
+
+              <CardBody>
+                <Info>
+                  <Label>
+                    <MdPerson size={12} style={{ marginRight: 4 }} />
+                    User
+                  </Label>
+                  <Value>{payment.user_name}</Value>
+                </Info>
+                <Info>
+                  <Label>
+                    <MdPayment size={12} style={{ marginRight: 4 }} />
+                    Amount
+                  </Label>
+                  <Value>¥{payment.amount}</Value>
+                </Info>
+                <Info>
+                  <Label>
+                    <MdPayment size={12} style={{ marginRight: 4 }} />
+                    Method
+                  </Label>
+                  <Value>{payment.payment_method}</Value>
+                </Info>
+                <Info>
+                  <Label>
+                    <MdEvent size={12} style={{ marginRight: 4 }} />
+                    Requested
+                  </Label>
+                  <Value>{payment.created_at ? new Date(payment.created_at).toLocaleString() : '-'}</Value>
+                </Info>
+              </CardBody>
+
+              {payment.status === 'approved' && payment.confirmed_at && (
+                <ConfirmationInfo>
+                  <MdCheckCircle size={16} style={{ color: '#4ade80' }} />
+                  <span style={{ color: '#4ade80', fontSize: '14px', fontWeight: 500 }}>
+                    Confirmed on {new Date(payment.confirmed_at).toLocaleString()}
+                  </span>
+                </ConfirmationInfo>
+              )}
+
+              {payment.status === 'pending' && (
+                <Actions>
+                  <ConfirmBtn 
+                    onClick={() => handleConfirm(payment.id)} 
+                    disabled={loading}
+                  >
+                    <MdCheck size={16} />
+                    {loading ? 'Processing...' : (t('admin.confirmPayment') || 'Confirm Payment')}
+                  </ConfirmBtn>
+                  <RejectBtn 
+                    onClick={() => handleReject(payment.id)} 
+                    disabled={loading}
+                  >
+                    <MdClose size={16} />
+                    Reject
+                  </RejectBtn>
+                </Actions>
+              )}
             </Card>
           ))}
         </List>
       )}
-    </>
+    </Page>
   );
 }

@@ -4,17 +4,19 @@ from db.database import get_session
 from typing import Optional
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_openai import ChatOpenAI
 from utils import constants
 from botocore.config import Config
 from langchain_aws import ChatBedrockConverse
 from langchain_openai import AzureChatOpenAI
 import json
+import datetime
 from utils import ai_prompts
 from utils.procedures import CustomError, extract_json, extract_json_array
 from dependencies.auth_dependencies import get_current_user_dependency
 from db.models import (User, Thread, ThreadStatus, ThreadTask, ThreadTaskStatus, ThreadMessage,
                        ThreadChatType, ThreadChatFromChoices, ThreadTaskPlan, ThreadTaskPlanStatus,
-                       PlanSubtask, SubtaskStatus, ThreadTaskMemoryEntry, SubtaskType)
+                       PlanSubtask, SubtaskStatus, ThreadTaskMemoryEntry, SubtaskType, UserPlan)
 from schemas.aiagent import NextStepRequest, CurrentSubtaskRequestObj
 from utils.agentic_tools import run_tool_server_side
 from utils import llm_provider
@@ -34,6 +36,17 @@ router = APIRouter(
 @router.post('/{tid}/current_subtask')
 def current_subtask_request(tid: str, current_subtask_request_obj: CurrentSubtaskRequestObj,
                             db: Session = Depends(get_session), user: User = Depends(get_current_user_dependency)):
+
+    # Safety check: if the task is not WORKING anymore, the agent should stop polling
+    task_check = db.exec(select(ThreadTask).where(and_(
+        ThreadTask.thread_id == tid,
+        ThreadTask.status == ThreadTaskStatus.WORKING,
+    ))).first()
+
+    if not task_check:
+        # Task is no longer working - return a clear signal to the agent
+        raise CustomError(status.HTTP_410_GONE, 'Task_No_Longer_Active')
+
     instance = db.exec(select(Thread).where(and_(
         Thread.id == tid,
         Thread.user_id == user.id,
@@ -71,35 +84,41 @@ def current_subtask_request(tid: str, current_subtask_request_obj: CurrentSubtas
 
         llm = llm_provider.get_llm(agent='planner', temperature=0.3)
 
-        plan_user_message = [
-            {
-                'type': 'text',
-                'text': f'Current OS: {current_subtask_request_obj.current_os} \n\nCurrent Visible OS Native Interactive Elements: {json.dumps(current_subtask_request_obj.current_interactive_elements)}'
-            },
-            {
-                'type': 'text',
-                'text': f'Current Running Apps: {json.dumps(current_subtask_request_obj.current_running_apps)}'
-            }
-        ]
+        # Build the user message as a single text string for DeepSeek compatibility
+        plan_user_message_text = f"""Current OS: {current_subtask_request_obj.current_os}
+
+Current Visible OS Native Interactive Elements: {json.dumps(current_subtask_request_obj.current_interactive_elements)}
+
+Current Running Apps: {json.dumps(current_subtask_request_obj.current_running_apps)}"""
 
         if len(previous_tasks_arr) > 0:
-            plan_user_message.append({
-                'type': 'text',
-                'text': f'Previous Tasks (Limited to 10): \n {json.dumps(previous_tasks_arr)}',
-            })
+            plan_user_message_text += f"""
 
-        plan_user_message.append({
-            'type': 'text',
-            'text': f'Task: {task.task_text}'
-        })
+Previous Tasks (Limited to 10):
+{json.dumps(previous_tasks_arr)}"""
 
-        plan_prompt = ChatPromptTemplate.from_messages([
-            SystemMessage(ai_prompts.PLANNER_AGENT_PROMPT),
-            HumanMessage(content=plan_user_message),
-        ])
+        plan_user_message_text += f"""
 
-        chain = plan_prompt | llm
-        plan_response = chain.invoke({})
+Task: {task.task_text}"""
+
+        # Use direct message format for DeepSeek compatibility
+        messages = [
+            {"role": "system", "content": ai_prompts.PLANNER_AGENT_PROMPT},
+            {"role": "user", "content": plan_user_message_text}
+        ]
+
+        # Check if llm is ChatOpenAI (DeepSeek uses ChatOpenAI)
+        if isinstance(llm, ChatOpenAI):
+            plan_response = llm.invoke(messages)
+        else:
+            # Fallback for other models
+            plan_prompt = ChatPromptTemplate.from_messages([
+                SystemMessage(ai_prompts.PLANNER_AGENT_PROMPT),
+                HumanMessage(content=plan_user_message_text),
+            ])
+            chain = plan_prompt | llm
+            plan_response = chain.invoke({})
+        
         plan_response_data = extract_json(plan_response.content)
 
         plan = plan_response_data.get('subtasks')
@@ -146,6 +165,11 @@ def current_subtask_request(tid: str, current_subtask_request_obj: CurrentSubtas
         db.refresh(current_plan)
 
         task.status = ThreadTaskStatus.COMPLETED
+        
+        # Calculer la durée de la tâche
+        if task.created_at:
+            duration = datetime.datetime.now() - task.created_at
+            task.duration_minutes = duration.total_seconds() / 60
         db.add(task)
         db.commit()
         db.refresh(task)
@@ -179,6 +203,17 @@ def current_subtask_request(tid: str, current_subtask_request_obj: CurrentSubtas
 @router.post('/{tid}/next_step')
 def next_step(tid: str, next_step_req: NextStepRequest, db: Session = Depends(get_session),
               user: User = Depends(get_current_user_dependency)):
+
+    # Safety check: if the task is not WORKING anymore, the agent should stop polling
+    task_check = db.exec(select(ThreadTask).where(and_(
+        ThreadTask.thread_id == tid,
+        ThreadTask.status == ThreadTaskStatus.WORKING,
+    ))).first()
+
+    if not task_check:
+        # Task is no longer working - return a clear signal to the agent
+        raise CustomError(status.HTTP_410_GONE, 'Task_No_Longer_Active')
+
     instance = db.exec(select(Thread).where(and_(
         Thread.id == tid,
         Thread.user_id == user.id,
@@ -280,70 +315,130 @@ def next_step(tid: str, next_step_req: NextStepRequest, db: Session = Depends(ge
             'memory_item_text': memory_item.text,
         })
 
-    computer_use_user_message = [
-        {
-            'type': 'text',
-            'text': f'Current Subtask: {current_subtask.subtask_text}'
-        },
-        {
-            'type': 'text',
-            'text': f'Current OS: {next_step_req.current_os} \n\nCurrent Visible OS Native Interactive Elements: {json.dumps(next_step_req.current_interactive_elements)}'
-        },
-        {
-            'type': 'text',
-            'text': f'Current Running Apps: {json.dumps(next_step_req.current_running_apps)}'
-        }
-    ]
+    # Build the user message as a single text string for DeepSeek compatibility
+    computer_use_user_message_text = f"""Current Subtask: {current_subtask.subtask_text}
+
+Current OS: {next_step_req.current_os}
+
+Current Visible OS Native Interactive Elements: {json.dumps(next_step_req.current_interactive_elements)}
+
+Current Running Apps: {json.dumps(next_step_req.current_running_apps)}"""
 
     if len(memory_items_arr) > 0:
-        computer_use_user_message.append({
-            'type': 'text',
-            'text': f'Stored Memory Items: \n {json.dumps(memory_items_arr)}'
-        })
+        computer_use_user_message_text += f"""
+
+Stored Memory Items:
+{json.dumps(memory_items_arr)}"""
     if len(action_history) > 0:
-        computer_use_user_message.append({
-            'type': 'text',
-            'text': f'Previous Actions (Limited to 5, newest first): \n {json.dumps(action_history)}'
-        })
+        computer_use_user_message_text += f"""
+
+Previous Actions (Limited to 5, newest first):
+{json.dumps(action_history)}"""
     if len(previous_subtasks_arr) > 0:
-        computer_use_user_message.append({
-            'type': 'text',
-            'text': f'Previous Subtasks: \n {json.dumps(previous_subtasks_arr)}'
-        })
+        computer_use_user_message_text += f"""
+
+Previous Subtasks:
+{json.dumps(previous_subtasks_arr)}"""
     
-    computer_use_text_prompt = computer_use_user_message.copy()
+    computer_use_text_prompt = computer_use_user_message_text
     
-    if screenshot_user_message_block:
-        computer_use_user_message.append(screenshot_user_message_block)
+    # Check if llm is ChatOpenAI
+    if isinstance(llm, ChatOpenAI):
+        # Check if it's DeepSeek by looking at base_url
+        llm_base_url = getattr(llm, 'base_url', None)
+        if not llm_base_url and hasattr(llm, '_client'):
+            llm_base_url = str(getattr(llm._client, '_api_url', '')).lower()
+        
+        is_deepseek = llm_base_url and 'deepseek' in str(llm_base_url).lower()
+        
+        if is_deepseek:
+            # DeepSeek - text only, no vision support
+            messages = [
+                {"role": "system", "content": ai_prompts.COMPUTER_USE_SYSTEM_PROMPT},
+                {"role": "user", "content": computer_use_user_message_text}
+            ]
+            response = llm.invoke(messages)
+        else:
+            # Kimi or other ChatOpenAI models - supports vision
+            if screenshot_user_message_block:
+                computer_use_user_message = [
+                    {
+                        'type': 'text',
+                        'text': computer_use_user_message_text
+                    },
+                    screenshot_user_message_block
+                ]
+            else:
+                computer_use_user_message = computer_use_user_message_text
 
-    prompt = ChatPromptTemplate.from_messages([
-        SystemMessage(content=ai_prompts.COMPUTER_USE_SYSTEM_PROMPT),
-        HumanMessage(content=computer_use_user_message),
-    ])
+            prompt = ChatPromptTemplate.from_messages([
+                SystemMessage(content=ai_prompts.COMPUTER_USE_SYSTEM_PROMPT),
+                HumanMessage(content=computer_use_user_message),
+            ])
 
-    chain = prompt | llm
-    response = chain.invoke({})
+            chain = prompt | llm
+            response = chain.invoke({})
+    else:
+        # Fallback for other models
+        if screenshot_user_message_block:
+            computer_use_user_message = [
+                {
+                    'type': 'text',
+                    'text': computer_use_user_message_text
+                },
+                screenshot_user_message_block
+            ]
+        else:
+            computer_use_user_message = computer_use_user_message_text
 
-    print('Token Usage: ', response.usage_metadata)
+        prompt = ChatPromptTemplate.from_messages([
+            SystemMessage(content=ai_prompts.COMPUTER_USE_SYSTEM_PROMPT),
+            HumanMessage(content=computer_use_user_message),
+        ])
+
+        chain = prompt | llm
+        response = chain.invoke({})
+
+    # Print token usage if available (DeepSeek format)
+    if hasattr(response, 'usage_metadata') and response.usage_metadata:
+        print('Token Usage: ', response.usage_metadata)
+    elif hasattr(response, 'usage') and response.usage:
+        print('Token Usage: ', response.usage)
 
     response_data = None
-    if task.extended_thinking_mode is True:
-        for response_item in response.content:
-            if response_item.get('type') == 'reasoning_content':
-                thinking_message = ThreadMessage(
-                    thread_id=instance.id,
-                    thread_task_id=task.id,
-                    thread_chat_type=ThreadChatType.THINKING,
-                    thread_chat_from=ThreadChatFromChoices.FROM_AI,
-                    chain_of_thought=response_item.get('reasoning_content', {}).get('text'),
-                )
-                db.add(thinking_message)
-                db.commit()
-                db.refresh(thinking_message)
-            elif response_item.get('type') == 'text':
-                response_data = extract_json(response_item.get('text'))
+    
+    # Handle both DeepSeek and Kimi response formats
+    response_content = response.content
+    
+    # DeepSeek returns a string, Kimi returns a list
+    if isinstance(response_content, list):
+        # Kimi format with thinking mode
+        if task.extended_thinking_mode is True:
+            for response_item in response_content:
+                if response_item.get('type') == 'reasoning_content':
+                    thinking_message = ThreadMessage(
+                        thread_id=instance.id,
+                        thread_task_id=task.id,
+                        thread_chat_type=ThreadChatType.THINKING,
+                        thread_chat_from=ThreadChatFromChoices.FROM_AI,
+                        chain_of_thought=response_item.get('reasoning_content', {}).get('text'),
+                    )
+                    db.add(thinking_message)
+                    db.commit()
+                    db.refresh(thinking_message)
+                elif response_item.get('type') == 'text':
+                    response_data = extract_json(response_item.get('text'))
+        else:
+            # Try to find the text content in the list
+            for response_item in response_content:
+                if response_item.get('type') == 'text':
+                    response_data = extract_json(response_item.get('text'))
+                    break
+            if not response_data:
+                response_data = extract_json(str(response_content))
     else:
-        response_data = extract_json(response.content)
+        # DeepSeek format - string response
+        response_data = extract_json(response_content)
 
     ai_message = ThreadMessage(
         thread_id=instance.id,
@@ -389,6 +484,11 @@ def next_step(tid: str, next_step_req: NextStepRequest, db: Session = Depends(ge
             db.refresh(current_plan)
 
             task.status = ThreadTaskStatus.FAILED
+            
+            # Calculer la durée de la tâche
+            if task.created_at:
+                duration = datetime.datetime.now() - task.created_at
+                task.duration_minutes = duration.total_seconds() / 60
             db.add(task)
             db.commit()
             db.refresh(task)

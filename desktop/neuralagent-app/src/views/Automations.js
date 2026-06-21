@@ -14,6 +14,7 @@ import { Button } from '../components/Elements/Button';
 import NATextField from '../components/Elements/TextFields';
 import axios from '../utils/axios';
 import { useSelector } from 'react-redux';
+import { Link } from 'react-router-dom';
 import { EDUCATION_PLATFORM_ICON_URL as PLATFORM_ICON_URL } from '../utils/educationPlatformIcons';
 import { useI18n } from '../i18n/I18nContext';
 import { getUserStorageKey, STORAGE_KEYS } from '../utils/userStorage';
@@ -46,6 +47,33 @@ const Description = styled(Text)`
   color: rgba(255, 255, 255, 0.78);
   line-height: 1.5;
   max-width: 720px;
+`;
+
+const HelpLink = styled(Link)`
+  display: inline-flex;
+  color: #60a5fa;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  margin-top: 8px;
+
+  &:hover {
+    text-decoration: underline;
+  }
+`;
+
+const HelpButton = styled.button`
+  background: transparent;
+  border: none;
+  color: #60a5fa;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+
+  &:hover {
+    text-decoration: underline;
+  }
 `;
 
 const PlatformsGrid = styled.div`
@@ -434,6 +462,7 @@ export default function Automations() {
   const { t } = useI18n();
   const [platforms, setPlatforms] = useState(defaultPlatformsSeed);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [helpModalOpen, setHelpModalOpen] = useState(false);
   const [editingPlatform, setEditingPlatform] = useState(null);
   const [formData, setFormData] = useState({
     name: '',
@@ -632,7 +661,9 @@ export default function Automations() {
     <AutomationsContainer>
       <Header>
         <Title>{t('credentials.title')}</Title>
-        <Description>{t('credentials.description')}</Description>
+        <Description>
+          {t('credentials.description')} <HelpButton type="button" onClick={() => setHelpModalOpen(true)}>{t('auth.howToSetCredentials')}</HelpButton>
+        </Description>
       </Header>
 
       <SearchBar>
@@ -779,6 +810,24 @@ export default function Automations() {
                 {t('credentials.savePlatform')}
               </SaveButton>
             </Form>
+          </ModalContent>
+        </Modal>
+      )}
+
+      {helpModalOpen && (
+        <Modal>
+          <ModalContent>
+            <ModalHeader>
+              <ModalTitle>{t('auth.howToSetCredentials')}</ModalTitle>
+              <CloseButton type="button" onClick={() => setHelpModalOpen(false)}>
+                <MdClose />
+              </CloseButton>
+            </ModalHeader>
+            <div style={{ fontSize: '14px', color: 'rgba(255,255,255,0.85)', lineHeight: '1.6' }}>
+              <span style={{ color: '#ff4444', fontWeight: 'bold' }}>{t('auth.howToSetCredentialsWarning')}</span>
+              <br /><br />
+              {t('auth.howToSetCredentialsContent')}
+            </div>
           </ModalContent>
         </Modal>
       )}

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain, dialog, screen } from 'electron';
+import { app, BrowserWindow, Menu, ipcMain, dialog, screen, globalShortcut } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import isDev from 'electron-is-dev';
@@ -12,13 +12,113 @@ import url from 'url';
 import http from 'http';
 import { v4 as uuidv4 } from 'uuid';
 import { setupBackgroundMode, isBackgroundModeReady } from './electron/utils/wslSetup.js';
+import electronUpdater from 'electron-updater';
+import fs from 'fs';
+const { autoUpdater } = electronUpdater;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const store = new Store();
 
-const ADMIN_PASSWORD = 'ZimZamZum@2024!SuperSecure';
+// Admin password is now stored in backend .env file
+
+// ---------------------------------------------------------------------------
+// Auto-update configuration
+// ---------------------------------------------------------------------------
+function setupAutoUpdater() {
+  if (isDev) {
+    console.log('Auto-updates disabled in development mode');
+    return;
+  }
+
+  // Configure auto-updater to use GitHub Releases
+  autoUpdater.setFeedURL({
+    provider: 'github',
+    repo: 'zimzamzum_app',
+    owner: 'robert666777',
+    private: false,
+    releaseType: 'release'
+  });
+
+  // Check for updates on app start
+  autoUpdater.checkForUpdatesAndNotify();
+
+  // Event: Update available
+  autoUpdater.on('update-available', (info) => {
+    dialog.showMessageBox({
+      type: 'info',
+      title: 'New Update Available',
+      message: `A new version ${info.version} is available!`,
+      detail: 'The update will be downloaded automatically.',
+      buttons: ['OK']
+    });
+  });
+
+  // Event: Update downloaded
+  autoUpdater.on('update-downloaded', (info) => {
+    dialog.showMessageBox({
+      type: 'info',
+      title: 'Update Downloaded',
+      message: `Update ${info.version} has been downloaded!`,
+      detail: 'Restart the application to install the update.',
+      buttons: ['Restart Now', 'Later']
+    }).then((result) => {
+      if (result.response === 0) {
+        autoUpdater.quitAndInstall();
+      }
+    });
+  });
+
+  // Event: Error
+  autoUpdater.on('error', (error) => {
+    console.error('Auto-update error:', error);
+    dialog.showMessageBox({
+      type: 'error',
+      title: 'Update Error',
+      message: 'Failed to check for updates.',
+      detail: error.message,
+      buttons: ['OK']
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// API helpers — centralised payment calls to the Railway PostgreSQL backend
+// ---------------------------------------------------------------------------
+const API_BASE_URL_STORE_KEY = '_NA_API_BASE_URL';
+
+function getApiBaseUrl() {
+  return 'http://localhost:8000';
+}
+
+function getUserIdFromStore() {
+  const token = store.get(constants.ACCESS_TOKEN_STORE_KEY);
+  if (!token) return null;
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    return typeof payload.user_id === 'string' ? payload.user_id : null;
+  } catch {
+    return null;
+  }
+}
+
+async function apiRequest(method, path, body = null) {
+  const baseUrl = getApiBaseUrl();
+  const token = store.get(constants.ACCESS_TOKEN_STORE_KEY);
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+  };
+  const options = { method, headers };
+  if (body) options.body = JSON.stringify(body);
+  const response = await fetch(`${baseUrl}${path}`, options);
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`API ${method} ${path} failed (${response.status}): ${text}`);
+  }
+  return response.json();
+}
 
 const PLAN_DURATIONS = {
   free: 1,       // 1 jour de free trial
@@ -26,6 +126,9 @@ const PLAN_DURATIONS = {
   semester: 180, // 6 mois
   annual: 365    // 1 an
 };
+
+// Configuration du free plan (10 minutes/jour)
+const DAILY_FREE_MINUTES = 10;
 
 let mainWindow;
 let overlayWindow;
@@ -37,6 +140,154 @@ let bgSetupWindow;
 let adminWindow;
 let taskActiveOverlayWindow = null;
 let readyToClose = false;
+let taskStartTime = null; // Heure de début de la tâche pour le comptage des minutes
+let freePlanTimer = null; // Timer pour arrêter l'agent à 10 minutes
+let freePlanMinutesInterval = null;
+
+function getInProgressTaskMinutes() {
+  if (!taskStartTime) return 0;
+  return Math.ceil((Date.now() - taskStartTime.getTime()) / 60000);
+}
+
+// ============================================================
+// getUserPlanInfo - Vérifie le plan via le backend (source de vérité)
+// puis fallback sur electron-store. Retourne { plan, canStart }.
+// ============================================================
+async function getUserPlanInfo() {
+  const paidPlans = ['starter', 'semester', 'annual', 'pro'];
+  const userId = getUserIdFromStore();
+
+  // ========================================
+  // ÉTAPE 1 : Appeler le backend (source de vérité)
+  // ========================================
+  try {
+    const token = store.get(constants.ACCESS_TOKEN_STORE_KEY);
+    if (token) {
+      const response = await fetch(`${getApiBaseUrl()}/apps/payments/user/plan`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const planId = data.plan_id || 'free';
+
+        console.log(`[getUserPlanInfo] Backend says plan = "${planId}"`);
+
+        if (paidPlans.includes(planId)) {
+          return { plan: planId, canStart: true, isPaid: true };
+        }
+
+        // Plan = free → vérifier les minutes quotidiennes
+        console.log(`[getUserPlanInfo] Free plan detected - checking daily minutes...`);
+        const freePlanResetKey = 'free_plan_last_reset_date';
+        const today = new Date().toDateString();
+        const lastResetDate = store.get(freePlanResetKey, '');
+        if (lastResetDate !== today) {
+          return { plan: 'free', canStart: true, isPaid: false };
+        }
+        const snapshot = getFreePlanMinutesSnapshot();
+        console.log(`[getUserPlanInfo] Free plan: ${snapshot.used}/${snapshot.total} min used, ${snapshot.remaining} remaining`);
+        return { plan: 'free', canStart: snapshot.remaining > 0, isPaid: false };
+      } else {
+        console.warn(`[getUserPlanInfo] Backend returned ${response.status}, falling back to local check`);
+      }
+    }
+  } catch (backendError) {
+    console.error(`[getUserPlanInfo] Backend call failed: ${backendError.message}`);
+    // En cas d'erreur réseau, on tombe dans le fallback local
+  }
+
+  // ========================================
+  // ÉTAPE 2 : Fallback - vérifier electron-store
+  // ========================================
+  const rawPayments = store.get('pendingPayments', []);
+  const payments = Array.isArray(rawPayments) ? rawPayments : [];
+  const confirmedPayment = payments.find(p => {
+    if (typeof p !== 'object' || !p) return false;
+    return p.userId === userId && p.status === 'confirmed';
+  });
+  if (confirmedPayment && confirmedPayment.plan && paidPlans.includes(confirmedPayment.plan)) {
+    console.log(`[getUserPlanInfo] Found confirmed payment in store: ${confirmedPayment.plan}`);
+    return { plan: confirmedPayment.plan, canStart: true, isPaid: true };
+  }
+
+  const planKey = userId ? `userPlan_${userId}` : null;
+  if (planKey) {
+    const storedPlanRaw = store.get(planKey, null);
+    if (storedPlanRaw && typeof storedPlanRaw === 'object' && storedPlanRaw.plan && paidPlans.includes(storedPlanRaw.plan)) {
+      const expiresAt = storedPlanRaw.expiresAt;
+      const now = new Date();
+      const expiry = expiresAt ? new Date(expiresAt) : null;
+      if (!expiry || expiry > now) {
+        console.log(`[getUserPlanInfo] Found valid paid plan in store: ${storedPlanRaw.plan}`);
+        return { plan: storedPlanRaw.plan, canStart: true, isPaid: true };
+      }
+    }
+  }
+
+  // Free plan → vérifier les minutes quotidiennes
+  const freePlanResetKey = 'free_plan_last_reset_date';
+  const today = new Date().toDateString();
+  const lastResetDate = store.get(freePlanResetKey, '');
+  if (lastResetDate !== today) {
+    return { plan: 'free', canStart: true, isPaid: false };
+  }
+  const snapshot = getFreePlanMinutesSnapshot();
+  console.log(`[getUserPlanInfo] Free plan (store fallback): ${snapshot.used}/${snapshot.total} min used, ${snapshot.remaining} remaining`);
+  return { plan: 'free', canStart: snapshot.remaining > 0, isPaid: false };
+}
+
+// Alias pour compatibilité (certains appels peuvent utiliser l'ancien nom)
+const canStartTaskSync = getUserPlanInfo;
+
+function getStoredDailyUsedMinutes() {
+  const userId = getUserIdFromStore();
+  const freePlanMinutesKey = 'free_plan_daily_used_minutes';
+  const freePlanResetKey = 'free_plan_last_reset_date';
+  const today = new Date().toDateString();
+  const lastResetDate = store.get(freePlanResetKey, '');
+
+  if (lastResetDate !== today) {
+    return 0;
+  }
+
+  return store.get(freePlanMinutesKey, 0);
+}
+
+function getFreePlanMinutesSnapshot() {
+  const userId = getUserIdFromStore();
+  const freePlanMinutesKey = 'free_plan_daily_used_minutes';
+  const freePlanResetKey = 'free_plan_last_reset_date';
+  const storedUsed = store.get(freePlanMinutesKey, 0);
+  const inProgress = getInProgressTaskMinutes();
+  const used = storedUsed + inProgress;
+  const remaining = Math.max(0, DAILY_FREE_MINUTES - used);
+  return { used, remaining, total: DAILY_FREE_MINUTES };
+}
+
+function broadcastFreePlanMinutesUpdate() {
+  const snapshot = getFreePlanMinutesSnapshot();
+  mainWindow?.webContents.send('free-plan-minutes-updated', snapshot);
+  overlayWindow?.webContents.send('free-plan-minutes-updated', snapshot);
+}
+
+function startFreePlanMinutesTicker() {
+  if (freePlanMinutesInterval) return;
+  broadcastFreePlanMinutesUpdate();
+  freePlanMinutesInterval = setInterval(broadcastFreePlanMinutesUpdate, 10000);
+}
+
+function stopFreePlanMinutesTicker() {
+  if (freePlanMinutesInterval) {
+    clearInterval(freePlanMinutesInterval);
+    freePlanMinutesInterval = null;
+  }
+  broadcastFreePlanMinutesUpdate();
+}
 
 function ensureDeviceId() {
   let deviceId = store.get(constants.DEVICE_ID_STORE_KEY);
@@ -69,33 +320,31 @@ ipcMain.on('set-refresh-token', (_, token) => store.set(constants.REFRESH_TOKEN_
 ipcMain.handle('get-refresh-token', () => store.get(constants.REFRESH_TOKEN_STORE_KEY));
 ipcMain.on('delete-refresh-token', () => store.delete(constants.REFRESH_TOKEN_STORE_KEY));
 
-ipcMain.handle('get-pending-payments', () => {
+ipcMain.handle('get-pending-payments', async () => {
   return store.get('pendingPayments', []);
 });
 
-ipcMain.on('add-pending-payment', (_, payment) => {
+ipcMain.handle('add-pending-payment', (_, payment) => {
   const payments = store.get('pendingPayments', []);
+  payment.id = Date.now();
+  payment.status = 'pending';
   payments.push(payment);
   store.set('pendingPayments', payments);
+  return payment;
 });
 
-ipcMain.on('confirm-payment', (_, paymentId) => {
+ipcMain.handle('confirm-payment', (_, paymentId) => {
   const payments = store.get('pendingPayments', []);
-  const updated = payments.map(p => 
-    p.id === paymentId ? { ...p, status: 'confirmed', confirmedAt: new Date().toISOString() } : p
-  );
-  store.set('pendingPayments', updated);
-  
-  const payment = payments.find(p => p.id === paymentId);
-  if (payment) {
-    const userId = payment.userId || 'guest';
-    store.set(`userPlan_${userId}`, {
-      plan: payment.plan,
-      startedAt: new Date().toISOString(),
-      userId: userId,
-      expiresAt: calculateExpirationDate(payment.plan)
-    });
+  const idx = payments.findIndex(p => p.id === paymentId);
+  if (idx !== -1) {
+    payments[idx].status = 'confirmed';
+    payments[idx].confirmedAt = new Date().toISOString();
+    store.set('pendingPayments', payments);
+    const userPlan = { plan: payments[idx].plan, startedAt: payments[idx].confirmedAt, expiresAt: calculateExpirationDate(payments[idx].plan) };
+    store.set(`userPlan_${payments[idx].userId}`, userPlan);
+    return payments[idx];
   }
+  return null;
 });
 
 function calculateExpirationDate(plan) {
@@ -105,19 +354,99 @@ function calculateExpirationDate(plan) {
   return expiration.toISOString();
 }
 
-ipcMain.handle('get-user-plan', (_, userId) => {
+ipcMain.handle('get-user-plan', async (_, userId) => {
   const id = userId || 'guest';
-  let userPlan = store.get(`userPlan_${id}`, null);
+  const userPlan = store.get(`userPlan_${id}`, null);
+  if (userPlan) {
+    return { ...userPlan, isExpired: isPlanExpired(userPlan) };
+  }
+  // Default free plan with 1-day trial
+  const expiresAt = calculateExpirationDate('free');
+  return { plan: 'free', startedAt: new Date().toISOString(), expiresAt, userId: id, isExpired: false };
+});
+
+// ------------------------------
+// Free Plan Minutes Management
+// ------------------------------
+
+ipcMain.handle('get-remaining-minutes', () => {
+  const userId = getUserIdFromStore();
+  const freePlanMinutesKey = 'free_plan_daily_used_minutes';
+  const freePlanResetKey = 'free_plan_last_reset_date';
+  const today = new Date().toDateString();
+  const lastResetDate = store.get(freePlanResetKey, '');
+
+  if (lastResetDate !== today) {
+    store.set(freePlanMinutesKey, 0);
+    store.set(freePlanResetKey, today);
+  }
+
+  return getFreePlanMinutesSnapshot().remaining;
+});
+
+ipcMain.handle('can-start-task', () => {
+  const userId = getUserIdFromStore();
+  const freePlanResetKey = 'free_plan_last_reset_date';
+  const today = new Date().toDateString();
+  const lastResetDate = store.get(freePlanResetKey, '');
+
+  if (lastResetDate !== today) {
+    return true;
+  }
+
+  return getFreePlanMinutesSnapshot().remaining > 0;
+});
+
+ipcMain.handle('add-used-minutes', (_, minutes) => {
+  const userId = getUserIdFromStore();
+  const freePlanMinutesKey = 'free_plan_daily_used_minutes';
+  const freePlanResetKey = 'free_plan_last_reset_date';
+  const today = new Date().toDateString();
+  const lastResetDate = store.get(freePlanResetKey, '');
   
-  if (!userPlan) {
-    const startedAt = new Date().toISOString();
-    const expiresAt = calculateExpirationDate('free');
-    userPlan = { plan: 'free', startedAt, expiresAt, userId: id };
-    store.set(`userPlan_${id}`, userPlan);
+  if (lastResetDate !== today) {
+    store.set(freePlanMinutesKey, 0);
+    store.set(freePlanResetKey, today);
   }
   
-  const isExpired = isPlanExpired(userPlan);
-  return { ...userPlan, isExpired };
+  const currentUsed = store.get(freePlanMinutesKey, 0);
+  store.set(freePlanMinutesKey, currentUsed + minutes);
+  return true;
+});
+
+ipcMain.handle('get-daily-free-minutes', () => {
+  return DAILY_FREE_MINUTES;
+});
+
+ipcMain.handle('get-locale', async () => {
+  try {
+    const locale = await mainWindow?.webContents.executeJavaScript(
+      `localStorage.getItem('neuralagent.locale')`
+    );
+    if (locale) return locale;
+  } catch (e) {
+    // ignore
+  }
+  return store.get('neuralagent.locale', 'en');
+});
+
+ipcMain.on('set-locale', (_, locale) => {
+  store.set('neuralagent.locale', locale);
+});
+
+ipcMain.handle('get-used-minutes', () => {
+  const userId = getUserIdFromStore();
+  const freePlanMinutesKey = 'free_plan_daily_used_minutes';
+  const freePlanResetKey = 'free_plan_last_reset_date';
+  const today = new Date().toDateString();
+  const lastResetDate = store.get(freePlanResetKey, '');
+
+  if (lastResetDate !== today) {
+    store.set(freePlanMinutesKey, 0);
+    store.set(freePlanResetKey, today);
+  }
+
+  return getFreePlanMinutesSnapshot().used;
 });
 
 function isPlanExpired(userPlan) {
@@ -125,61 +454,74 @@ function isPlanExpired(userPlan) {
   return new Date(userPlan.expiresAt) < new Date();
 }
 
-ipcMain.handle('check-plan-expired', (_, userId) => {
+ipcMain.handle('check-plan-expired', async (_, userId) => {
   const id = userId || 'guest';
   const userPlan = store.get(`userPlan_${id}`, null);
   if (!userPlan) return false;
   return isPlanExpired(userPlan);
 });
 
-ipcMain.handle('get-plan-countdown', (_, userId) => {
+ipcMain.handle('get-plan-countdown', async (_, userId) => {
   const id = userId || 'guest';
-  const userPlan = store.get(`userPlan_${id}`, null);
+  let userPlan = store.get(`userPlan_${id}`, null);
+  
   if (!userPlan || !userPlan.expiresAt) {
-    return { days: 0, hours: 0, minutes: 0, expired: true };
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 1);
+    userPlan = { 
+      plan: 'free', 
+      expiresAt: expiresAt.toISOString(),
+      userId: id 
+    };
+    store.set(`userPlan_${id}`, userPlan);
   }
   
   const now = new Date();
   const expires = new Date(userPlan.expiresAt);
   const diff = expires.getTime() - now.getTime();
-  
-  if (diff <= 0) {
-    return { days: 0, hours: 0, minutes: 0, expired: true };
-  }
-  
+  if (diff <= 0) return { days: 0, hours: 0, minutes: 0, expired: true };
   const days = Math.floor(diff / (1000 * 60 * 60 * 24));
   const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
   const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-  
   return { days, hours, minutes, expired: false };
 });
 
-ipcMain.handle('extend-plan-by-days', (_, userId, daysToAdd) => {
+ipcMain.handle('extend-plan-by-days', async (_, userId, daysToAdd) => {
+  // This operation is admin-only on the backend; here we just return the
+  // current plan info after the extension would have been applied server-side.
+  // For now, fall back to local store extension so existing callers don't break.
   const id = userId || 'guest';
   let userPlan = store.get(`userPlan_${id}`, null);
-  
   if (!userPlan) {
-    const startedAt = new Date().toISOString();
     const expiresAt = calculateExpirationDate('free');
-    userPlan = { plan: 'free', startedAt, expiresAt, userId: id };
+    userPlan = { plan: 'free', startedAt: new Date().toISOString(), expiresAt, userId: id };
   }
-  
-  // Étendre la date d'expiration
   const currentExpires = new Date(userPlan.expiresAt);
   currentExpires.setDate(currentExpires.getDate() + daysToAdd);
   userPlan.expiresAt = currentExpires.toISOString();
-  
   store.set(`userPlan_${id}`, userPlan);
   return userPlan;
 });
 
 ipcMain.on('set-user-plan', (_, planData) => {
+  // Keep local store in sync as a cache/fallback
   const userId = planData.userId || 'guest';
   store.set(`userPlan_${userId}`, planData);
 });
 
-ipcMain.handle('verify-admin-password', (_, password) => {
-  return password === ADMIN_PASSWORD;
+ipcMain.handle('verify-admin-password', async (_, password) => {
+  try {
+    const response = await fetch(`${getApiBaseUrl()}/apps/auth/verify-admin`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password })
+    });
+    const result = await response.json();
+    return result.valid || false;
+  } catch (error) {
+    console.error('Error verifying admin password:', error);
+    return false;
+  }
 });
 
 ipcMain.on('expand-overlay', (_, hasSuggestions) => {
@@ -299,34 +641,88 @@ ipcMain.on('clear-pending-scheduled-task', () => {
   console.log('[Scheduler] Pending task cleared');
 });
 
+ipcMain.on('set-api-base-url', (_, apiBaseUrl) => {
+  store.set(API_BASE_URL_STORE_KEY, apiBaseUrl);
+  console.log(`[API Base URL set]: ${apiBaseUrl}`);
+});
+
+ipcMain.handle('get-api-base-url', () => getApiBaseUrl());
+
 ipcMain.on('launch-ai-agent', async (_, baseURL, threadId, backgroundMode) => {
   const isWindows = process.platform === 'win32';
   const isMac = process.platform === 'darwin';
 
+  console.log('[launch-ai-agent] START');
+  console.log('[launch-ai-agent] baseURL:', baseURL);
+  console.log('[launch-ai-agent] threadId:', threadId);
+  console.log('[launch-ai-agent] backgroundMode:', backgroundMode);
+  console.log('[launch-ai-agent] mainWindow exists:', !!mainWindow, mainWindow?.isDestroyed());
+  console.log('[launch-ai-agent] overlayWindow exists:', !!overlayWindow, overlayWindow?.isDestroyed());
+
+  // Vérifier le plan via le backend (source de vérité) - récupère toutes les infos en un seul appel
+  const planInfo = await getUserPlanInfo();
+  console.log(`[launch-ai-agent] Plan: ${planInfo.plan}, canStart: ${planInfo.canStart}, isPaid: ${planInfo.isPaid}`);
+
+  if (!planInfo.canStart) {
+    console.log('[launch-ai-agent] BLOCKED: Free plan limit');
+    mainWindow?.webContents.send('free-plan-limit-reached');
+    overlayWindow?.webContents.send('free-plan-limit-reached');
+    return;
+  }
+
+  console.log('[launch-ai-agent] Plan check OK, proceeding...');
+  const userId = getUserIdFromStore();
+
+  if (!planInfo.isPaid) {
+    // Free plan: track minutes and auto-stop at limit (cumulatif)
+    taskStartTime = new Date();
+    startFreePlanMinutesTicker();
+    
+    // Calculer les minutes restantes pour cette session
+    const freePlanMinutesKey = 'free_plan_daily_used_minutes';
+    const storedUsed = store.get(freePlanMinutesKey, 0);
+    const remainingMinutes = Math.max(0, DAILY_FREE_MINUTES - storedUsed);
+    console.log(`[Free Plan] Used: ${storedUsed}min, Remaining for this task: ${remainingMinutes}min`);
+    
+    freePlanTimer = setTimeout(() => {
+      console.log('[Free Plan Limit Reached]: Stopping agent (cumulative daily limit)');
+      if (aiagentProcess) {
+        aiagentProcess.kill('SIGTERM');
+      }
+    }, remainingMinutes * 60 * 1000);
+  }
+
+  // Persist the API base URL so payment helpers can reach the backend
+  store.set(API_BASE_URL_STORE_KEY, baseURL);
   store.set(constants.LAST_BACKGROUND_MODE_VALUE, backgroundMode.toString());
 
   if (!backgroundMode) {
-    aiagentProcess = spawn(isWindows ? './aiagent/venv/Scripts/python' : './aiagent/venv/bin/python', ['./aiagent/main.py'], {
+    const agentPath = isDev
+      ? path.join(__dirname, 'agent_build', isWindows ? 'agent.exe' : 'agent')
+      : path.join(process.resourcesPath, 'app.asar.unpacked', 'agent_build', isWindows ? 'agent.exe' : 'agent');
+
+    console.log('[Agent] Trying to spawn agent at:', agentPath);
+    console.log('[Agent] File exists:', fs.existsSync(agentPath));
+
+    if (!fs.existsSync(agentPath)) {
+      console.error('[Agent ERROR] agent.exe not found at:', agentPath);
+      mainWindow?.webContents.send('trigger-cancel-all-tasks');
+      mainWindow?.webContents.send('show-error-message', 'Desktop agent (agent.exe) not found. Please rebuild the agent or check the agent_build folder.');
+      return;
+    }
+
+    console.log('[launch-ai-agent] Spawning agent.exe...');
+    aiagentProcess = spawn(agentPath, [], {
       env: {
         NEURALAGENT_API_URL: baseURL,
         NEURALAGENT_THREAD_ID: threadId,
         NEURALAGENT_USER_ACCESS_TOKEN: store.get(constants.ACCESS_TOKEN_STORE_KEY),
-        PYTHONUTF8: '1',
       },
     });
-
-    // const agentPath = isDev
-    // ? path.join(__dirname, 'agent_build', isWindows ? 'agent.exe' : 'agent')
-    // : path.join(process.resourcesPath, isWindows ? 'agent.exe' : 'agent');
-
-    // aiagentProcess = spawn(agentPath, [], {
-    //   env: {
-    //     NEURALAGENT_API_URL: baseURL,
-    //     NEURALAGENT_THREAD_ID: threadId,
-    //     NEURALAGENT_USER_ACCESS_TOKEN: store.get(constants.ACCESS_TOKEN_STORE_KEY),
-    //   },
-    // });
+    console.log('[launch-ai-agent] Agent spawned, PID:', aiagentProcess.pid);
+    console.log('[launch-ai-agent] Minimizing mainWindow...');
     mainWindow?.minimize();
+    console.log('[launch-ai-agent] Minimize done');
   } else {
     // VERY IMPORTANT
     const envVars = {
@@ -345,10 +741,14 @@ ipcMain.on('launch-ai-agent', async (_, baseURL, threadId, backgroundMode) => {
     launchBackgroundAgentWindow();
   }
 
+  console.log('[launch-ai-agent] Sending ai-agent-launch IPC to windows...');
   mainWindow?.webContents.send('ai-agent-launch', threadId);
   overlayWindow?.webContents.send('ai-agent-launch', threadId);
+  console.log('[launch-ai-agent] IPC sent, showing task indicator...');
   showTaskIndicatorWindow();
+  console.log('[launch-ai-agent] Task indicator shown, expanding overlay...');
   expandMinimizeOverlay(true, false);
+  console.log('[launch-ai-agent] DONE');
 
   aiagentProcess.stdout.on('data', (data) => console.log(`[Agent stdout]: ${data}`));
   aiagentProcess.stderr.on('data', (data) => console.error(`[Agent stderr]: ${data}`));
@@ -360,6 +760,38 @@ ipcMain.on('launch-ai-agent', async (_, baseURL, threadId, backgroundMode) => {
 
   aiagentProcess.on('exit', (code, signal) => {
     console.log(`[Agent exited with code ${code}]`);
+    
+    // Arrêter le timer de free plan si il existe
+    if (freePlanTimer) {
+      clearTimeout(freePlanTimer);
+      freePlanTimer = null;
+    }
+    
+    // Calculer et ajouter les minutes utilisées pour le free plan
+    if (taskStartTime) {
+      const taskEndTime = new Date();
+      const durationMinutes = Math.max(1, Math.round((taskEndTime - taskStartTime) / 60000));
+      console.log(`[Task Duration]: ${durationMinutes} minutes`);
+      
+      // Enregistrer les minutes utilisées (compteur global pour tous les free accounts)
+      const today = new Date().toDateString();
+      const freePlanMinutesKey = 'free_plan_daily_used_minutes';
+      const freePlanResetKey = 'free_plan_last_reset_date';
+      const lastResetDate = store.get(freePlanResetKey, '');
+      
+      if (lastResetDate !== today) {
+        store.set(freePlanMinutesKey, 0);
+        store.set(freePlanResetKey, today);
+      }
+      
+      const currentUsed = store.get(freePlanMinutesKey, 0);
+      store.set(freePlanMinutesKey, currentUsed + durationMinutes);
+      console.log(`[Free Plan Minutes Used]: ${currentUsed + durationMinutes}/${DAILY_FREE_MINUTES} (shared across all free accounts)`);
+      
+      taskStartTime = null;
+      stopFreePlanMinutesTicker();
+    }
+    
     if (bgAgentWindow) {
       bgAgentWindow.close();
     }
@@ -525,7 +957,7 @@ function triggerScheduledTask(task) {
   store.set(LAST_RUN_KEY_PREFIX + task.id, new Date().toISOString());
   
   const fullTaskDetails = `${task.description || task.name || 'No description'}
-  
+
 Platform: ${task.platformName || task.platformId || 'None'}
 Login URL: ${task.platformLoginUrl || 'None'}
 Username: ${task.platformUsername || 'None'}
@@ -1026,6 +1458,9 @@ app.whenReady().then(() => {
   }
   createAppMenu();
   startScheduler();
+  
+  // Setup auto-updates
+  setupAutoUpdater();
   
   // Register global shortcut for Admin Panel: Ctrl+Shift+A
   const ret = globalShortcut.register('CommandOrControl+Shift+A', () => {

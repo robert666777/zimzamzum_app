@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { FlexSpacer } from '../components/Elements/SmallElements';
 import { useDispatch, useSelector } from 'react-redux';
 import axios from '../utils/axios';
-import { setLoadingDialog, setError } from '../store';
+import { setLoadingDialog, setError, setUpgradePrompt } from '../store';
 import constants from '../utils/constants';
 import { Text } from '../components/Elements/Typography';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -14,6 +14,7 @@ import { useI18n } from '../i18n/I18nContext';
 import { resolvePlatformLogoUrl } from '../utils/educationPlatformIcons';
 import { getUserStorageKey, PRODUCT_TOUR_SESSION_KEY } from '../utils/userStorage';
 import ProductTour from '../components/ProductTour';
+import paymentApi from '../utils/paymentApi';
 
 const PAGE_BG = '#1a1a1a';
 const CARD_BG = '#2b2b2b';
@@ -559,17 +560,32 @@ export default function Home() {
       return;
     }
     
-    if (window.electronAPI && user?.id) {
-      const userPlan = await window.electronAPI.getUserPlan(user.id);
-      if (userPlan.isExpired) {
-        if (userPlan.plan === 'free') {
-          dispatch(setError(true, t('upgrade.freeTrialExpired') || '1-day free trial expired. Upgrade to access ZimZamZum features.'));
-        } else {
-          dispatch(setError(true, t('profile.planExpired') || 'Your plan has expired. Please renew to continue.'));
-        }
-        setTimeout(() => dispatch(setError(false, '')), 5000);
-        return;
+    // Vérifier le plan depuis Supabase (source de vérité)
+    try {
+      const userPlanData = await paymentApi.getUserPlan(accessToken);
+      const planId = userPlanData.plan_id || 'free';
+      
+      // Si le plan vient d'expirer, afficher un message (mais ne pas bloquer)
+      if (userPlanData.plan_just_expired) {
+        dispatch(setError(true, t('profile.planExpired') || 'Your paid plan has expired. You have been moved to the free plan with 10 min/day.'));
+        setTimeout(() => dispatch(setError(false, '')), 8000);
       }
+      
+      // Pour le free plan seulement : vérifier le quota de minutes
+      if (planId === 'free') {
+        try {
+          const canStart = await window.electronAPI.canStartTask();
+          if (!canStart) {
+            dispatch(setUpgradePrompt(true));
+            return;
+          }
+        } catch (error) {
+          console.error('Error checking free plan status:', error);
+        }
+      }
+    } catch (error) {
+      console.error('Error checking user plan:', error);
+      // En cas d'erreur, on autorise l'action (ne pas bloquer l'utilisateur)
     }
     
     const data = {

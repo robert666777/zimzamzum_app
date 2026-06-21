@@ -3,12 +3,15 @@ import styled, { keyframes } from 'styled-components';
 import { useNavigate } from 'react-router-dom';
 import zimzamzum_logo from '../assets/zimzamzum_logo_ic_only_white.png'
 import { AvatarButton, IconButton } from '../components/Elements/Button';
-import { useSelector } from 'react-redux';
+import { useSelector, useDispatch } from 'react-redux';
 import axios from '../utils/axios';
 import { FaStopCircle } from 'react-icons/fa';
 import constants from '../utils/constants';
 import { MdOutlineSchedule } from 'react-icons/md';
 import { GiBrain } from 'react-icons/gi';
+import { setError, setUpgradePrompt } from '../store';
+import { useI18n } from '../i18n/I18nContext';
+import paymentApi from '../utils/paymentApi';
 
 const Container = styled.div`
   background: #000000;
@@ -145,7 +148,9 @@ export default function Overlay() {
   const [threads, setThreads] = useState([]);
 
   const accessToken = useSelector(state => state.accessToken);
+  const dispatch = useDispatch();
   const navigate = useNavigate();
+  const { t } = useI18n();
 
   const fetchThreads = async () => {
     if (!accessToken) return;
@@ -217,6 +222,32 @@ export default function Overlay() {
   const createThread = async (prompt = null) => {
     if (messageText.length === 0 && prompt === null) {
       return;
+    }
+    
+    // Vérifier le plan depuis Supabase (source de vérité)
+    if (accessToken) {
+      try {
+        const userPlanData = await paymentApi.getUserPlan(accessToken);
+        const planId = userPlanData.plan_id || 'free';
+        
+        // Si le plan vient d'expirer, afficher un message (mais ne pas bloquer)
+        if (userPlanData.plan_just_expired) {
+          dispatch(setError(true, t('profile.planExpired') || 'Your paid plan has expired. You have been moved to the free plan with 10 min/day.'));
+          setTimeout(() => dispatch(setError(false, '')), 8000);
+        }
+        
+        // Pour le free plan seulement : vérifier le quota de minutes
+        if (planId === 'free') {
+          const canStart = await window.electronAPI.canStartTask();
+          if (!canStart) {
+            dispatch(setError(true, t('upgradePlans.dailyMinutesUsed')));
+            setTimeout(() => dispatch(setError(false, '')), 5000);
+            return;
+          }
+        }
+      } catch (error) {
+        console.error('Error checking user plan:', error);
+      }
     }
 
     const data = {task: prompt !== null ? prompt : messageText, background_mode: backgroundMode, extended_thinking_mode: thinkingMode};

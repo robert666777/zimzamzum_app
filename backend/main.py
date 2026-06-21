@@ -9,6 +9,7 @@ from routers.aiagent.suggestor import router as suggestor_aiagent_router
 from routers.aiagent.background import router as bg_mode_aiagent_router
 from routers.automations import automations_router
 from routers.apps.referrals import router as referrals_router
+from routers.apps.payments import router as payments_router
 from utils.procedures import CustomError
 
 from dotenv import load_dotenv
@@ -61,6 +62,7 @@ app.include_router(bg_mode_aiagent_router)
 app.include_router(aiagent_router)
 app.include_router(automations_router)
 app.include_router(referrals_router)
+app.include_router(payments_router)
 
 # @app.on_event('startup')
 # async def startup():

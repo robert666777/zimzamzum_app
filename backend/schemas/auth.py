@@ -59,3 +59,10 @@ class PhoneSignup(BaseModel):
     name: str
     login_session_type: str = 'windows'
     referral_code: Optional[str] = None
+
+
+class UserResponse(BaseModel):
+    id: str
+    name: str
+    email: Optional[str] = None
+    phone_number: Optional[str] = None

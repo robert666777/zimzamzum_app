@@ -7,7 +7,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setRefreshToken: (refreshToken) => ipcRenderer.send('set-refresh-token', refreshToken),
   getRefreshToken: () => ipcRenderer.invoke('get-refresh-token'),
   deleteRefreshToken: () => ipcRenderer.send('delete-refresh-token'),
-  launchAIAgent: (baseURL, threadId, backgroundMode) => ipcRenderer.send('launch-ai-agent', baseURL, threadId, backgroundMode),
+  launchAIAgent: (baseURL, threadId, backgroundMode) => {
+    console.log('[preload] launchAIAgent called:', baseURL, threadId, backgroundMode);
+    ipcRenderer.send('launch-ai-agent', baseURL, threadId, backgroundMode);
+  },
   stopAIAgent: () => ipcRenderer.send('stop-ai-agent'),
   onLogout: (callback) => ipcRenderer.on('trigger-logout', callback),
   onAIAgentExit: (callback) => ipcRenderer.on('ai-agent-exit', callback),
@@ -30,18 +33,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onSetupComplete: (cb) => ipcRenderer.on('setup-complete', (_, result) => cb(result)),
   on: (channel, callback) => ipcRenderer.on(channel, (_, data) => callback(data)),
   onExecuteScheduledTask: (callback) => ipcRenderer.on('execute-scheduled-task', (_, data) => callback(data)),
+  showError: (message) => ipcRenderer.send('show-error-message', message),
   onScheduledTaskReady: (callback) => ipcRenderer.on('scheduled-task-ready', (_, data) => callback(data)),
   getPendingScheduledTask: () => ipcRenderer.invoke('get-pending-scheduled-task'),
   clearPendingScheduledTask: () => ipcRenderer.send('clear-pending-scheduled-task'),
   syncScheduledTasks: (tasks) => ipcRenderer.send('sync-scheduled-tasks', tasks),
   testScheduledTask: (task) => ipcRenderer.send('test-scheduled-task', task),
   getPendingPayments: () => ipcRenderer.invoke('get-pending-payments'),
-  addPendingPayment: (payment) => ipcRenderer.send('add-pending-payment', payment),
-  confirmPayment: (paymentId) => ipcRenderer.send('confirm-payment', paymentId),
+  addPendingPayment: (payment) => ipcRenderer.invoke('add-pending-payment', payment),
+  confirmPayment: (paymentId) => ipcRenderer.invoke('confirm-payment', paymentId),
   getUserPlan: (userId) => ipcRenderer.invoke('get-user-plan', userId),
   setUserPlan: (planData) => ipcRenderer.send('set-user-plan', planData),
   verifyAdminPassword: (password) => ipcRenderer.invoke('verify-admin-password', password),
   checkPlanExpired: (userId) => ipcRenderer.invoke('check-plan-expired', userId),
   getPlanCountdown: (userId) => ipcRenderer.invoke('get-plan-countdown', userId),
   extendPlanByDays: (userId, daysToAdd) => ipcRenderer.invoke('extend-plan-by-days', userId, daysToAdd),
+  // Free Plan Minutes Management
+  getRemainingMinutes: () => ipcRenderer.invoke('get-remaining-minutes'),
+  getUsedMinutes: () => ipcRenderer.invoke('get-used-minutes'),
+  getDailyFreeMinutes: () => ipcRenderer.invoke('get-daily-free-minutes'),
+  addUsedMinutes: (minutes) => ipcRenderer.invoke('add-used-minutes', minutes),
+  canStartTask: () => ipcRenderer.invoke('can-start-task'),
+  onFreePlanMinutesUpdated: (callback) => ipcRenderer.on('free-plan-minutes-updated', (_, data) => callback(data)),
+  // Event listener management
+  removeListener: (channel, callback) => ipcRenderer.removeListener(channel, callback),
 });

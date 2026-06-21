@@ -1,5 +1,9 @@
-const SERVER_DNS = process.env.REACT_APP_PROTOCOL + '://' + process.env.REACT_APP_DNS || 'http://127.0.0.1:8000';
-const WEBSOCKET_DNS = process.env.REACT_APP_WEBSOCKET_PROTOCOL + '://' + process.env.REACT_APP_DNS || 'ws://127.0.0.1:8000';
+const SERVER_DNS = (process.env.REACT_APP_PROTOCOL && process.env.REACT_APP_DNS)
+  ? `${process.env.REACT_APP_PROTOCOL}://${process.env.REACT_APP_DNS}`
+  : 'http://127.0.0.1:8000';
+const WEBSOCKET_DNS = (process.env.REACT_APP_WEBSOCKET_PROTOCOL && process.env.REACT_APP_DNS)
+  ? `${process.env.REACT_APP_WEBSOCKET_PROTOCOL}://${process.env.REACT_APP_DNS}`
+  : 'ws://127.0.0.1:8000';
 
 const constants = {
   BASE_URL: SERVER_DNS + '/apps',

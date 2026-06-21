@@ -5,6 +5,7 @@ import os
 from typing import Optional
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_openai import ChatOpenAI
 import json
 from utils import ai_prompts
 from utils.procedures import CustomError, extract_json, extract_json_array
@@ -59,13 +60,22 @@ def get_suggestions(request: SuggestorRequest, db: Session = Depends(get_session
 
     llm = llm_provider.get_llm(agent='suggestor', temperature=0.6)
 
-    prompt = ChatPromptTemplate.from_messages([
-        SystemMessage(content=ai_prompts.SUGGESTOR_AGENT_PROMPT),
-        HumanMessage(content=prompt_blocks)
-    ])
-
-    chain = prompt | llm
-    response = chain.invoke({})
+    # Check if llm is ChatOpenAI (DeepSeek) for proper format
+    if isinstance(llm, ChatOpenAI):
+        # DeepSeek format - build messages directly
+        messages = [
+            {"role": "system", "content": ai_prompts.SUGGESTOR_AGENT_PROMPT},
+            {"role": "user", "content": prompt_blocks}
+        ]
+        response = llm.invoke(messages)
+    else:
+        # Fallback for other models
+        prompt = ChatPromptTemplate.from_messages([
+            SystemMessage(content=ai_prompts.SUGGESTOR_AGENT_PROMPT),
+            HumanMessage(content=prompt_blocks)
+        ])
+        chain = prompt | llm
+        response = chain.invoke({})
 
     response_data = extract_json(response.content)
 

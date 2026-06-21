@@ -5,7 +5,7 @@ sqlmodel
 pydantic
 alembic
 sqlalchemy
-psycopg2
+psycopg2-binary
 passlib
 bcrypt
 pyjwt

@@ -19,6 +19,8 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useSelector, useDispatch } from 'react-redux';
 import { setAccessToken, setUser } from '../../store';
 import { useI18n } from '../../i18n/I18nContext';
+import paymentApi from '../../utils/paymentApi';
+import { getFreePlanMinutesSnapshot, onFreePlanMinutesUpdated } from '../../utils/freePlanMinutes';
 
 export const NewTaskButton = styled.button`
   display: flex;
@@ -422,32 +424,90 @@ export function SidebarNavSections() {
 export function SidebarUserProfile() {
   const [open, setOpen] = useState(false);
   const [plan, setPlan] = useState(null);
+  const [rawPlan, setRawPlan] = useState(null); // 'free', 'pro', 'starter', etc. pour comparaisons
   const [countdown, setCountdown] = useState({ days: 0, hours: 0, minutes: 0, expired: false });
   const [totalDurationMs, setTotalDurationMs] = useState(24 * 60 * 60 * 1000); // 1 jour par défaut
+  const [remainingMinutes, setRemainingMinutes] = useState(10); // 10 minutes par défaut pour free
+  const [usedMinutes, setUsedMinutes] = useState(0);
+  const [dailyFreeMinutes, setDailyFreeMinutes] = useState(10); // 10 minutes/jour
   const shellRef = useRef(null);
   const navigate = useNavigate();
   const dispatch = useDispatch();
   const user = useSelector((state) => state.user);
+  const accessToken = useSelector((state) => state.accessToken);
   const { locale, setLocale, t } = useI18n();
 
   useEffect(() => {
+    const refreshFreePlanMinutes = async () => {
+      const snapshot = await getFreePlanMinutesSnapshot();
+      setUsedMinutes(snapshot.used);
+      setRemainingMinutes(snapshot.remaining);
+      setDailyFreeMinutes(snapshot.daily);
+    };
+
     const fetchPlan = async () => {
       let userPlan = null;
-      let storedPlanData = null;
       let cd = null;
+      let remainingMin = 0;
       
-      if (window.electronAPI && user?.id) {
-        storedPlanData = await window.electronAPI.getUserPlan(user.id);
-        cd = await window.electronAPI.getPlanCountdown(user.id);
-        // Prioriser le plan stocké dans Electron
-        if (storedPlanData && storedPlanData.plan) {
-          userPlan = storedPlanData.plan;
+      // Prioriser Supabase (source de vérité pour les plans payants)
+      try {
+        const userPlanData = await paymentApi.getUserPlan(accessToken);
+        userPlan = userPlanData.plan_id || 'free';
+        
+        // Calculer le countdown pour les plans payants
+        if (userPlan !== 'free' && userPlanData.expires_at) {
+          const expireDate = new Date(userPlanData.expires_at);
+          // Vérifier que la date est valide
+          if (!isNaN(expireDate.getTime())) {
+            const now = new Date();
+            const diff = expireDate - now;
+            
+            if (diff > 0) {
+              const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+              const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+              const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+              cd = { days, hours, minutes, expired: false };
+            } else {
+              cd = { days: 0, hours: 0, minutes: 0, expired: true };
+            }
+          } else {
+            // Date invalide mais plan payant : utiliser la période par défaut
+            cd = { days: 30, hours: 0, minutes: 0, expired: false };
+          }
+        } else if (userPlan !== 'free') {
+          // Si pas de date d'expiration mais ce n'est pas le free plan
+          // Utiliser la période du plan depuis les données
+          if (userPlanData.plan && userPlanData.plan.period_days) {
+            cd = { days: userPlanData.plan.period_days, hours: 0, minutes: 0, expired: false };
+          } else {
+            cd = { days: 30, hours: 0, minutes: 0, expired: false }; // Valeur par défaut
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching user plan from DB:', error);
+        
+        // Fallback sur Electron-store
+        if (window.electronAPI && user?.id) {
+          const storedPlanData = await window.electronAPI.getUserPlan(user.id);
+          cd = await window.electronAPI.getPlanCountdown(user.id);
+          if (storedPlanData && storedPlanData.plan) {
+            userPlan = storedPlanData.plan;
+          }
+        }
+        
+        // Fallback final sur les données de l'utilisateur
+        if (!userPlan) {
+          userPlan = user?.plan ?? user?.subscription_tier ?? user?.tier ?? 'free';
         }
       }
       
-      // Fallback sur les données de l'utilisateur si pas de plan stocké
-      if (!userPlan) {
-        userPlan = user?.plan ?? user?.subscription_tier ?? user?.tier ?? 'free';
+      // Pour le free plan, utiliser electron-store
+      if (userPlan === 'free') {
+        setPlan(t('profile.planFree'));
+        setRawPlan('free');
+        await refreshFreePlanMinutes();
+        return; // Pas de countdown pour le free plan
       }
       
       let calculatedTotalMs = 24 * 60 * 60 * 1000; // 1 jour par défaut
@@ -455,23 +515,31 @@ export function SidebarUserProfile() {
         const planLower = userPlan.toLowerCase();
         if (planLower === 'pro') {
           setPlan(t('profile.planPro'));
+          setRawPlan('pro');
           calculatedTotalMs = 30 * 24 * 60 * 60 * 1000; // 30 jours
         } else if (planLower === 'starter') {
-          setPlan('Starter');
+          setPlan(t('profile.planStarter'));
+          setRawPlan('starter');
           calculatedTotalMs = 30 * 24 * 60 * 60 * 1000; // 30 jours
         } else if (planLower === 'semester') {
-          setPlan('Semester');
+          setPlan(t('profile.planSemester'));
+          setRawPlan('semester');
           calculatedTotalMs = 180 * 24 * 60 * 60 * 1000; // 180 jours
         } else if (planLower === 'annual') {
-          setPlan('Annual');
+          setPlan(t('profile.planAnnual'));
+          setRawPlan('annual');
           calculatedTotalMs = 365 * 24 * 60 * 60 * 1000; // 365 jours
         } else {
           setPlan(t('profile.planFree'));
-          calculatedTotalMs = 24 * 60 * 60 * 1000; // 1 jour
+          setRawPlan('free');
+          await refreshFreePlanMinutes();
+          return;
         }
       } else {
         setPlan(t('profile.planFree'));
-        calculatedTotalMs = 24 * 60 * 60 * 1000; // 1 jour
+        setRawPlan('free');
+        await refreshFreePlanMinutes();
+        return;
       }
       setTotalDurationMs(calculatedTotalMs);
       
@@ -481,9 +549,19 @@ export function SidebarUserProfile() {
     };
     
     fetchPlan();
-    const interval = setInterval(fetchPlan, 60000); // Rafraîchir toutes les minutes
-    return () => clearInterval(interval);
-  }, [user, t]);
+    const interval = setInterval(fetchPlan, 60000);
+    const freePlanInterval = setInterval(refreshFreePlanMinutes, 10000);
+    const handleMinutesUpdate = ({ used, remaining, total }) => {
+      setUsedMinutes(used);
+      setRemainingMinutes(remaining);
+      setDailyFreeMinutes(total);
+    };
+    onFreePlanMinutesUpdated(handleMinutesUpdate);
+    return () => {
+      clearInterval(interval);
+      clearInterval(freePlanInterval);
+    };
+  }, [user, t, accessToken]);
 
   useEffect(() => {
     if (!open) return;
@@ -536,18 +614,22 @@ export function SidebarUserProfile() {
           <MdHourglassEmpty />
           <PopoverRowText>
               <PopoverLabel>
-                {!plan ? t('profile.daysRemaining') : 
-                  plan === t('profile.planFree') ? t('profile.freeTrialEndsIn') : 
-                  t(`profile.${plan.toLowerCase()}PlanEndsIn`)}
+                {!rawPlan ? t('profile.daysRemaining') : 
+                  rawPlan === 'free' ? t('profile.freeTrialEndsIn') : 
+                  t(`profile.${rawPlan}PlanEndsIn`)}
               </PopoverLabel>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 <PopoverValue>
-                  {countdown.expired ? t('profile.expired') : `${countdown.days}d ${countdown.hours}h ${countdown.minutes}m`}
+                  {rawPlan === 'free' 
+                    ? `${Math.round(usedMinutes)}/${dailyFreeMinutes} ${t('profile.minutesRemaining')}`
+                    : countdown.expired ? t('profile.expired') : `${countdown.days}d ${countdown.hours}h ${countdown.minutes}m`}
                 </PopoverValue>
                 <ProgressBarContainer>
                   <ProgressBar 
                     style={{ 
-                      width: getProgressWidth(countdown, totalDurationMs)
+                      width: rawPlan === 'free' 
+                        ? `${(usedMinutes / dailyFreeMinutes) * 100}%`
+                        : getProgressWidth(countdown, totalDurationMs)
                     }} 
                   />
                 </ProgressBarContainer>

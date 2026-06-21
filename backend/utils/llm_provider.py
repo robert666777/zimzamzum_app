@@ -136,11 +136,11 @@ def get_llm(agent: str, temperature: float = 0.0, max_tokens: int = 2000, thinki
         )
 
     elif model_type == "deepseek":
-        deepseek_base_url = os.getenv("DEEPSEEK_BASE_URL")
+        deepseek_base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
         deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
         kwargs = {
             "model": model_id,
-            "temperature": temperature,
+            "temperature": 1.0,  # DeepSeek performs better with temperature=1.0
             "max_tokens": max_tokens,
             "timeout": None,
             "max_retries": 2
@@ -151,13 +151,96 @@ def get_llm(agent: str, temperature: float = 0.0, max_tokens: int = 2000, thinki
             kwargs["api_key"] = deepseek_api_key
         return ChatOpenAI(**kwargs)
 
+    elif model_type == "openrouter":
+        openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
+        if not openrouter_api_key:
+            raise ValueError(
+                "OPENROUTER_API_KEY is required when using model type 'openrouter'. "
+                "Get a key at https://openrouter.ai/keys"
+            )
+        return ChatOpenAI(
+            model=model_id,
+            api_key=openrouter_api_key,
+            base_url="https://openrouter.ai/api/v1",
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=None,
+            max_retries=2,
+            default_headers={
+                "HTTP-Referer": "https://localhost:8000",
+                "X-Title": "ZimZamZum Local Dev"
+            }
+        )
+
+    elif model_type == "mistral":
+        mistral_api_key = os.getenv("MISTRAL_API_KEY")
+        if not mistral_api_key:
+            raise ValueError(
+                "MISTRAL_API_KEY is required when using model type 'mistral'. "
+                "Get a key at https://console.mistral.ai/api-keys/"
+            )
+        return ChatOpenAI(
+            model=model_id,
+            api_key=mistral_api_key,
+            base_url="https://api.mistral.ai/v1",
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=None,
+            max_retries=2,
+        )
+
+    elif model_type == "gemini":
+        gemini_api_key = os.getenv("GEMINI_API_KEY")
+        gemini_base_url = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
+        if not gemini_api_key:
+            raise ValueError(
+                "GEMINI_API_KEY is required when using model type 'gemini'. "
+                "Get a key at https://aistudio.google.com/apikey"
+            )
+        return ChatOpenAI(
+            model=model_id,
+            api_key=gemini_api_key,
+            base_url=gemini_base_url,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=None,
+            max_retries=2,
+        )
+
+    elif model_type == "apiyi":
+        apiyi_api_key = os.getenv("APIYI_API_KEY")
+        apiyi_base_url = os.getenv("APIYI_BASE_URL", "https://api.apiyi.com/v1/openai/")
+        if not apiyi_api_key:
+            raise ValueError(
+                "APIYI_API_KEY is required when using model type 'apiyi'. "
+                "Get a key at https://apiyi.com"
+            )
+        return ChatOpenAI(
+            model=model_id,
+            api_key=apiyi_api_key,
+            base_url=apiyi_base_url,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=None,
+            max_retries=2,
+        )
+
     elif model_type == "anthropic":
+        anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+        anthropic_base_url = os.getenv("ANTHROPIC_BASE_URL")
+        if not anthropic_api_key:
+            raise ValueError(
+                "ANTHROPIC_API_KEY is required when using model type 'anthropic'. "
+                "Get a key at https://console.anthropic.com/settings/keys"
+            )
 
         if not thinking_enabled:
 
             return ChatAnthropic(
 
                 model=model_id,
+                api_key=anthropic_api_key,
+                base_url=anthropic_base_url,
 
                 temperature=temperature,
 
@@ -174,6 +257,8 @@ def get_llm(agent: str, temperature: float = 0.0, max_tokens: int = 2000, thinki
             return ChatAnthropic(
 
                 model=model_id,
+                api_key=anthropic_api_key,
+                base_url=anthropic_base_url,
 
                 temperature=temperature,
 
