@@ -30,3 +30,4 @@ websockets
 broadcaster
 redis
 requests
+argon2_cffi
