@@ -20,6 +20,7 @@ class RetrieveThread(BaseModel):
     status: str
     created_at: Optional[datetime.datetime]
     thread_tasks: List[ListThreadTask]
+    current_task_status: Optional[str] = None  # Status de la task en cours (working, completed, failed, etc)
 
 
 class ListThread(BaseModel):

@@ -305,6 +305,23 @@ def retrieve_thread(tid: str, db: Session = Depends(get_session), user: User = D
     if not instance:
         raise CustomError(status.HTTP_404_NOT_FOUND, 'Thread not found')
 
+    # Calculer le status de la task en cours
+    working_task = db.exec(select(ThreadTask).where(and_(
+        ThreadTask.thread_id == tid,
+        ThreadTask.status == ThreadTaskStatus.WORKING
+    ))).first()
+
+    # Ajouter le status de la task en cours à l'instance
+    if working_task:
+        instance.current_task_status = working_task.status.value if hasattr(working_task.status, 'value') else str(working_task.status)
+    else:
+        # Pas de task working, prendre la dernière task
+        last_task = db.exec(select(ThreadTask).where(
+            ThreadTask.thread_id == tid
+        ).order_by(ThreadTask.created_at.desc())).first()
+        if last_task:
+            instance.current_task_status = last_task.status.value if hasattr(last_task.status, 'value') else str(last_task.status)
+
     return instance
 
 
