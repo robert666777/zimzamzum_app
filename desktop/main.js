@@ -153,52 +153,83 @@ function getInProgressTaskMinutes() {
 // getUserPlanInfo - Vérifie le plan via le backend (source de vérité)
 // puis fallback sur electron-store. Retourne { plan, canStart }.
 // ============================================================
+async function fetchWithTimeout(url, options, timeoutMs = 15000) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(timeoutId);
+    return response;
+  } catch (err) {
+    clearTimeout(timeoutId);
+    throw err;
+  }
+}
+
 async function getUserPlanInfo() {
   const paidPlans = ['starter', 'semester', 'annual', 'pro'];
   const userId = getUserIdFromStore();
 
   // ========================================
-  // ÉTAPE 1 : Appeler le backend (source de vérité)
+  // ÉTAPE 1 : Appeler le backend (source de vérité) avec retry
   // ========================================
-  try {
-    const token = store.get(constants.ACCESS_TOKEN_STORE_KEY);
-    if (token) {
-      const response = await fetch(`${getApiBaseUrl()}/apps/payments/user/plan`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      });
+  const token = store.get(constants.ACCESS_TOKEN_STORE_KEY);
+  if (token) {
+    const maxRetries = 2;
+    let lastError = null;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      if (attempt > 0) {
+        console.log(`[getUserPlanInfo] Retry ${attempt}/${maxRetries} in 2s...`);
+        await new Promise(r => setTimeout(r, 2000));
+      }
+      try {
+        const response = await fetchWithTimeout(`${getApiBaseUrl()}/apps/payments/user/plan`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        }, 15000);
 
-      if (response.ok) {
-        const data = await response.json();
-        const planId = data.plan_id || 'free';
+        if (response.ok) {
+          const data = await response.json();
+          const planId = data.plan_id || 'free';
 
-        console.log(`[getUserPlanInfo] Backend says plan = "${planId}"`);
+          console.log(`[getUserPlanInfo] Backend says plan = "${planId}"`);
 
-        if (paidPlans.includes(planId)) {
-          return { plan: planId, canStart: true, isPaid: true };
+          // Mettre à jour le store pour que le fallback soit à jour
+          if (paidPlans.includes(planId)) {
+            store.set(`userPlan_${userId}`, {
+              plan: planId,
+              expiresAt: data.expires_at || null,
+              updatedAt: new Date().toISOString(),
+            });
+            return { plan: planId, canStart: true, isPaid: true };
+          }
+
+          // Plan = free → vérifier les minutes quotidiennes
+          console.log(`[getUserPlanInfo] Free plan detected - checking daily minutes...`);
+          const freePlanResetKey = 'free_plan_last_reset_date';
+          const today = new Date().toDateString();
+          const lastResetDate = store.get(freePlanResetKey, '');
+          if (lastResetDate !== today) {
+            return { plan: 'free', canStart: true, isPaid: false };
+          }
+          const snapshot = getFreePlanMinutesSnapshot();
+          console.log(`[getUserPlanInfo] Free plan: ${snapshot.used}/${snapshot.total} min used, ${snapshot.remaining} remaining`);
+          return { plan: 'free', canStart: snapshot.remaining > 0, isPaid: false };
+        } else {
+          console.warn(`[getUserPlanInfo] Backend returned ${response.status}`);
+          lastError = new Error(`HTTP ${response.status}`);
         }
-
-        // Plan = free → vérifier les minutes quotidiennes
-        console.log(`[getUserPlanInfo] Free plan detected - checking daily minutes...`);
-        const freePlanResetKey = 'free_plan_last_reset_date';
-        const today = new Date().toDateString();
-        const lastResetDate = store.get(freePlanResetKey, '');
-        if (lastResetDate !== today) {
-          return { plan: 'free', canStart: true, isPaid: false };
-        }
-        const snapshot = getFreePlanMinutesSnapshot();
-        console.log(`[getUserPlanInfo] Free plan: ${snapshot.used}/${snapshot.total} min used, ${snapshot.remaining} remaining`);
-        return { plan: 'free', canStart: snapshot.remaining > 0, isPaid: false };
-      } else {
-        console.warn(`[getUserPlanInfo] Backend returned ${response.status}, falling back to local check`);
+      } catch (backendError) {
+        console.error(`[getUserPlanInfo] Attempt ${attempt + 1} failed: ${backendError.message}`);
+        lastError = backendError;
       }
     }
-  } catch (backendError) {
-    console.error(`[getUserPlanInfo] Backend call failed: ${backendError.message}`);
-    // En cas d'erreur réseau, on tombe dans le fallback local
+    if (lastError) {
+      console.warn(`[getUserPlanInfo] All ${maxRetries + 1} attempts failed, falling back to local check`);
+    }
   }
 
   // ========================================
