@@ -77,3 +77,14 @@ app.include_router(payments_router)
 @app.get('/')
 async def index():
     return {'message': datetime.datetime.now()}
+
+
+@app.get('/health')
+async def health():
+    """
+    Lightweight health check used by the desktop keep-alive ping.
+    Returns quickly without touching the database so it can be called
+    frequently (every ~12 minutes) to prevent Render's free-tier
+    spin-down after 15 minutes of inactivity.
+    """
+    return {'status': 'ok', 'ts': datetime.datetime.now().isoformat()}

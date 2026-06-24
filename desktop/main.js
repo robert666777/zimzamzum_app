@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain, dialog, screen, globalShortcut } from 'electron';
+import { app, BrowserWindow, Menu, ipcMain, dialog, screen, globalShortcut, powerMonitor } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import isDev from 'electron-is-dev';
@@ -166,16 +166,140 @@ async function fetchWithTimeout(url, options, timeoutMs = 15000) {
   }
 }
 
+// ============================================================
+// Keep-alive — Ping léger du backend toutes les 12 minutes pour
+// empêcher le spin-down de Render (free tier, 15 min d'inactivité).
+// - Skip si l'utilisateur n'est pas connecté
+// - Skip si l'écran est verrouillé ou l'app en arrière-plan long
+// - Garde budget mensuel pour rester sous les 750h Render free
+// ============================================================
+const KEEPALIVE_INTERVAL_MS = 12 * 60 * 1000;        // 12 minutes (marge avant 15min Render)
+const KEEPALIVE_TIMEOUT_MS = 5000;                   // 5s suffit, on veut juste un signal
+const KEEPALIVE_STATE_KEY = '_NA_keepalive_state';   // clé electron-store
+const KEEPALIVE_MONTH_BUDGET_MS = 18 * 60 * 60 * 1000; // 18h de "service awake" cumulé/mois (budget conservateur, marge vs 720h/mois)
+const KEEPALIVE_AWAKE_DURATION_PER_PING_MS = 12 * 60 * 1000; // chaque ping "compte" comme 12 min de service actif (approximation)
+
+let keepAliveTimer = null;
+let lastBackendHotUntil = 0;
+
+function _readKeepAliveState() {
+  const state = store.get(KEEPALIVE_STATE_KEY, null);
+  if (!state || typeof state !== 'object') {
+    return { month: '', awakeMs: 0, lastPing: 0, lastSuccess: 0 };
+  }
+  return {
+    month: String(state.month || ''),
+    awakeMs: Number(state.awakeMs || 0),
+    lastPing: Number(state.lastPing || 0),
+    lastSuccess: Number(state.lastSuccess || 0),
+  };
+}
+
+function _writeKeepAliveState(state) {
+  store.set(KEEPALIVE_STATE_KEY, state);
+}
+
+function _currentMonthKey() {
+  const d = new Date();
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+function _shouldSkipKeepAlive() {
+  // Pas connecté → pas la peine de pinger
+  if (!store.get(constants.ACCESS_TOKEN_STORE_KEY)) {
+    return 'not_logged_in';
+  }
+  // Écran verrouillé / app en sommeil profond → l'utilisateur ne s'en sert pas, on évite de gaspiller
+  if (powerMonitor && powerMonitor.isSystemSuspended) return 'system_suspended';
+  // On ne pinge pas en arrière-plan planant : l'utilisateur n'utilise pas l'app
+  // Note : on garde quand même le ping si l'overlay est actif (l'agent travaille peut-être)
+  if (BrowserWindow.getAllWindows().length === 0) return 'no_window';
+  // Garde budget mensuel pour rester sous les 750h Render free
+  const s = _readKeepAliveState();
+  if (s.month !== _currentMonthKey()) return null; // nouveau mois, reset auto
+  if (s.awakeMs >= KEEPALIVE_MONTH_BUDGET_MS) return 'monthly_budget_reached';
+  return null;
+}
+
+async function _pingKeepAlive() {
+  const skipReason = _shouldSkipKeepAlive();
+  if (skipReason) {
+    console.log(`[KeepAlive] Skipped (${skipReason})`);
+    return false;
+  }
+  try {
+    const resp = await fetchWithTimeout(
+      `${getApiBaseUrl()}/health`,
+      { method: 'GET' },
+      KEEPALIVE_TIMEOUT_MS
+    );
+    const now = Date.now();
+    const s = _readKeepAliveState();
+    const month = _currentMonthKey();
+    // Reset mensuel
+    let nextState = { month, awakeMs: s.month === month ? s.awakeMs : 0, lastPing: now, lastSuccess: s.lastSuccess };
+    if (resp.ok) {
+      nextState.lastSuccess = now;
+      nextState.awakeMs += KEEPALIVE_AWAKE_DURATION_PER_PING_MS;
+      _writeKeepAliveState(nextState);
+      // Notifie les appelants suivants que le backend est probablement chaud
+      lastBackendHotUntil = now + 5 * 60 * 1000;
+      console.log(`[KeepAlive] OK (budget: ${(nextState.awakeMs / 3600000).toFixed(1)}h / ${(KEEPALIVE_MONTH_BUDGET_MS / 3600000).toFixed(0)}h ce mois)`);
+      return true;
+    }
+    _writeKeepAliveState(nextState);
+    console.warn(`[KeepAlive] Backend returned ${resp.status}`);
+    return false;
+  } catch (err) {
+    console.warn(`[KeepAlive] Ping failed: ${err.message}`);
+    return false;
+  }
+}
+
+function _isBackendKnownHot() {
+  return Date.now() < lastBackendHotUntil;
+}
+
+function startKeepAlive() {
+  if (keepAliveTimer) {
+    console.log('[KeepAlive] Already running');
+    return;
+  }
+  console.log(`[KeepAlive] Starting (interval ${KEEPALIVE_INTERVAL_MS / 60000} min, budget ${KEEPALIVE_MONTH_BUDGET_MS / 3600000}h/mois)`);
+  // Premier ping immédiat au boot pour réveiller le service si nécessaire
+  // puis à intervalle régulier
+  _pingKeepAlive();
+  keepAliveTimer = setInterval(_pingKeepAlive, KEEPALIVE_INTERVAL_MS);
+  // Quand l'écran se rallume après une veille, on pinge tout de suite
+  if (powerMonitor && powerMonitor.on) {
+    powerMonitor.on('resume', () => {
+      console.log('[KeepAlive] System resumed, pinging now');
+      _pingKeepAlive();
+    });
+  }
+}
+
+function stopKeepAlive() {
+  if (keepAliveTimer) {
+    clearInterval(keepAliveTimer);
+    keepAliveTimer = null;
+    console.log('[KeepAlive] Stopped');
+  }
+}
+
 async function getUserPlanInfo() {
-  const paidPlans = ['starter', 'semester', 'annual', 'pro'];
-  const userId = getUserIdFromStore();
 
   // ========================================
   // ÉTAPE 1 : Appeler le backend (source de vérité) avec retry
   // ========================================
   const token = store.get(constants.ACCESS_TOKEN_STORE_KEY);
   if (token) {
-    const maxRetries = 2;
+    // Si le keep-alive vient de pinger (<5min), le backend est très
+    // probablement chaud → 1 essai suffit et timeout court
+    const backendHot = _isBackendKnownHot();
+    const maxRetries = backendHot ? 0 : 2;
+    const timeoutMs = backendHot ? 5000 : 15000;
+    if (backendHot) console.log('[getUserPlanInfo] Backend known hot, fast path');
     let lastError = null;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       if (attempt > 0) {
@@ -189,9 +313,11 @@ async function getUserPlanInfo() {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
-        }, 15000);
+        }, timeoutMs);
 
         if (response.ok) {
+          // Marquer le backend comme chaud pour les prochains appels
+          lastBackendHotUntil = Date.now() + 5 * 60 * 1000;
           const data = await response.json();
           const planId = data.plan_id || 'free';
 
@@ -337,6 +463,8 @@ ipcMain.on('set-token', (_, token) => {
   if (!overlayWindow) {
     createOverlayWindow();
   }
+  // Démarre le keep-alive maintenant que l'utilisateur est connecté
+  startKeepAlive();
 });
 
 ipcMain.handle('get-token', () => store.get(constants.ACCESS_TOKEN_STORE_KEY));
@@ -346,6 +474,8 @@ ipcMain.on('delete-token', () => {
   if (overlayWindow) {
     overlayWindow.close();
   }
+  // Stoppe le keep-alive car plus personne n'en a besoin
+  stopKeepAlive();
 });
 ipcMain.on('set-refresh-token', (_, token) => store.set(constants.REFRESH_TOKEN_STORE_KEY, token));
 ipcMain.handle('get-refresh-token', () => store.get(constants.REFRESH_TOKEN_STORE_KEY));
@@ -1489,15 +1619,21 @@ app.whenReady().then(() => {
   }
   createAppMenu();
   startScheduler();
-  
+
+  // Keep-alive : ping léger toutes les 12 min pour empêcher le
+  // spin-down de Render free tier. Démarre uniquement si user connecté.
+  if (store.get(constants.ACCESS_TOKEN_STORE_KEY)) {
+    startKeepAlive();
+  }
+
   // Setup auto-updates
   setupAutoUpdater();
-  
+
   // Register global shortcut for Admin Panel: Ctrl+Shift+A
   const ret = globalShortcut.register('CommandOrControl+Shift+A', () => {
     launchAdminWindow();
   });
-  
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
@@ -1508,6 +1644,7 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   stopScheduler();
+  stopKeepAlive();
   if (aiagentProcess && !aiagentProcess.killed) {
     kill(aiagentProcess.pid, 'SIGKILL', (err) => {
       if (err) console.error('❌ Failed to kill agent:', err);
@@ -1518,5 +1655,6 @@ app.on('window-all-closed', () => {
 });
 
 app.on('will-quit', () => {
+  stopKeepAlive();
   globalShortcut.unregisterAll();
 });
