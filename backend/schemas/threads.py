@@ -42,14 +42,6 @@ class UpdateThread(BaseModel):
     title: str
 
 
-class ListThreadTask(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    status: str
-    task_text: str
-
-
 class ListThreadMessage(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
