@@ -31,10 +31,20 @@ def reconcile_orphan_threads(db: Session, user_id: str) -> None:
     activity. This typically happens when the desktop agent process crashes
     or the app is killed abruptly.
 
-    - Tasks with no DESKTOP_USE message for 120s are marked CANCELED
+    A task is NOT considered an orphan if:
+      - An active ThreadTaskPlan already exists for it (agent has started
+        planning and is mid-execution)
+      - A recent DESKTOP_USE message exists
+      - The task is younger than the grace period (60s)
+
+    - Tasks with no DESKTOP_USE message AND no active plan for >120s are
+      marked CANCELED
+    - Tasks with no DESKTOP_USE message AND no active plan AND older than
+      60s but younger than 120s are given more time
     - The corresponding thread is marked STANDBY
     - Any thread left in WORKING with NO working task is also cleaned up
     """
+    from db.models import ThreadTaskPlan, ThreadTaskPlanStatus
     working_threads = db.exec(
         select(Thread).where(and_(
             Thread.user_id == user_id,
@@ -65,11 +75,22 @@ def reconcile_orphan_threads(db: Session, user_id: str) -> None:
             db.add(thread)
             continue
 
-        # If thread has no messages at all and is older than 10s -> clean up
+        # If an active plan already exists for this task, the agent has
+        # definitely started - never mark as orphan in that case.
+        active_plan = db.exec(
+            select(ThreadTaskPlan).where(and_(
+                ThreadTaskPlan.thread_task_id == active_task.id,
+                ThreadTaskPlan.status == ThreadTaskPlanStatus.ACTIVE,
+            ))
+        ).first()
+        if active_plan:
+            continue
+
+        # If the task has no messages at all and is older than 60s -> clean up
         any_message = db.exec(
             select(ThreadMessage).where(ThreadMessage.thread_id == thread.id).limit(1)
         ).first()
-        if not any_message and active_task.created_at and (now - active_task.created_at).total_seconds() > 10:
+        if not any_message and active_task.created_at and (now - active_task.created_at).total_seconds() > 60:
             active_task.status = ThreadTaskStatus.CANCELED
             active_task.updated_at = now
             db.add(active_task)
@@ -92,8 +113,9 @@ def reconcile_orphan_threads(db: Session, user_id: str) -> None:
 
         is_orphan = False
         if not last_desktop_message:
-            # No desktop activity ever - orphan after 10s grace
-            if active_task.created_at and (now - active_task.created_at).total_seconds() > 10:
+            # No desktop activity ever - orphan only after 60s grace
+            # (was 10s, which was too aggressive for cold starts)
+            if active_task.created_at and (now - active_task.created_at).total_seconds() > 60:
                 is_orphan = True
         else:
             # Has desktop activity but stale for more than 120s
